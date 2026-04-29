@@ -28,8 +28,16 @@ One row per physical measuring workplace.
 - `name`
 - `hostname`
 - `location`
+- `operating_system`
 - `machine_name`
 - `machine_type`
+- `measurement_interface`
+- `scanner_host`
+- `scanner_port`
+- `scanner_protocol`
+- `payload_format`
+- `timing_notes`
+- `network_notes`
 - `active`
 - `created_at`
 - `updated_at`
@@ -50,15 +58,41 @@ One row per captured measurement event.
 - `id`
 - `part_id`
 - `station_id`
-- `aussenring`
-- `innenring`
-- `breite`
-- `ueberstand`
 - `result_status`
 - `measured_at`
 - `source_type`
 - `raw_payload_id`
+- `idempotency_key`
 - `created_at`
+
+### `measurement_values`
+
+One row per measured value in a measurement event.
+
+- `id`
+- `measurement_id`
+- `measurement_type`, for example `aussenring`, `innenring`, `breite`, `ueberstand`
+- `value`
+- `unit`
+- `result_status`
+
+### `measurement_types`
+
+Controlled catalog of allowed measurement value types.
+
+- `code`, for example `aussenring`, `innenring`, `breite`, `ueberstand`
+- `label`, localized UI label
+- `unit`
+- `active`
+- `created_at`
+
+### `station_measurement_types`
+
+Allowed measurement types per station.
+
+- `station_id`
+- `measurement_type_code`
+- `active`
 
 ### `raw_payloads`
 
@@ -98,6 +132,9 @@ Initial adapter targets:
 - File/directory polling adapter
 - Simulator/manual test adapter
 
+The current companion scaffold includes the shared adapter lifecycle plus simulator, TCP line,
+serial line, and SMB1 polling adapter foundations. See `docs/measurement-adapters.md`.
+
 ## Kiosk Startup
 
 ### Windows 11
@@ -130,7 +167,9 @@ A pilot station is accepted when:
 - Companion app starts automatically.
 - Keyence SR-X scanner submits a barcode over TCP/IP.
 - The barcode creates or resolves the correct part by `rueckmeldenummer`.
-- The measuring device produces the four measurement values.
+- The measuring device produces one or more typed measurement values.
+- Dedicated stations can produce one measurement value, such as only `breite` or only `ueberstand`.
+- Measurement types are known to the server and enabled per station.
 - Measurement is persisted centrally.
 - Raw payload is retained for traceability.
 - Temporary network interruption does not lose data.

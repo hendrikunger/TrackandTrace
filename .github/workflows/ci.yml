@@ -7,12 +7,17 @@ on:
     branches: [main]
 
 jobs:
-  placeholder:
-    name: Repository baseline
+  test:
+    name: Test Python scaffold
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check repository baseline
-        run: |
-          test -f README.md
-          test -f docs/architecture.md
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest
