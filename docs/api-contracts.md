@@ -12,6 +12,8 @@ station is allowed to submit.
 The response also includes `adapters`, which is the per-station companion adapter configuration.
 For SMB1 stations this is where fields such as `remote_dir`, `share`, `measurement_type`, and
 `value_column_index` are configured.
+Scanner fields are also returned here: `scanner_host` is the expected scanner IP address,
+`scanner_port` is the local listener port, and `scanner_protocol` is the scanner label.
 Station inventory is managed through `/api/stations`; see `docs/station-inventory.md`.
 
 ## Heartbeat
@@ -34,12 +36,15 @@ Station inventory is managed through `/api/stations`; see `docs/station-inventor
 `POST /barcode-scans`
 
 Creates or resolves a part by `rueckmeldenummer`.
+If `raw_payload` is provided, the server retains the original scanner payload for traceability.
 
 ```json
 {
   "station_id": 1,
   "rueckmeldenummer": "DEV-RM-0001",
-  "source_type": "keyence_srx"
+  "source_type": "keyence_srx",
+  "scanned_at": "2026-04-29T15:00:00+02:00",
+  "raw_payload": "RM-DEV-0001"
 }
 ```
 

@@ -43,6 +43,9 @@ def test_station_config_can_include_allowed_measurement_types() -> None:
         station_id=1,
         name="Station 1",
         active=True,
+        scanner_host="10.0.0.21",
+        scanner_port=9004,
+        scanner_protocol="Keyence SR-X TCP",
         adapters=[
             {
                 "type": "smb1_polling",
@@ -57,6 +60,7 @@ def test_station_config_can_include_allowed_measurement_types() -> None:
 
     assert config.measurement_types[0].code == "breite"
     assert config.adapters[0]["remote_dir"] == "/ExcelAusgabe"
+    assert config.scanner_port == 9004
 
 
 @pytest.mark.asyncio

@@ -111,7 +111,7 @@ The companion app is installed on every station.
 
 Responsibilities:
 
-- Connect to Keyence SR-X scanner over TCP/IP.
+- Listen for Keyence SR-X scanner connections on the station scanner port.
 - Connect to measuring machine interfaces.
 - Handle SMB1 on Ubuntu 24.04 LTS using `pysmb`.
 - Poll files or listen to TCP/serial streams.
@@ -125,7 +125,7 @@ Responsibilities:
 
 Initial adapter targets:
 
-- Keyence SR-X TCP barcode scanner
+- Keyence SR-X TCP barcode scanner listener
 - SMB1 polling adapter with `pysmb`
 - Generic TCP/IP measurement adapter
 - Generic serial measurement adapter
@@ -155,7 +155,7 @@ serial line, and SMB1 polling adapter foundations. See `docs/measurement-adapter
 ## Milestones
 
 1. Foundations: station inventory, database schema, FastAPI skeleton, API contracts, persistence, idempotency, WebSockets.
-2. Companion and integrations: companion runtime, Keyence SR-X TCP scanner, SMB1 via `pysmb`, TCP/IP and serial interfaces, parser layer.
+2. Companion and integrations: companion runtime, Keyence SR-X TCP scanner listener, SMB1 via `pysmb`, TCP/IP and serial interfaces, parser layer.
 3. Operator UI and kiosk: Panel station UI, supervisor/admin UI, Windows 11 kiosk, Ubuntu 24.04 kiosk.
 4. Pilot hardening: auth, diagnostics, deployment packaging, automated tests, simulators, pilot validation.
 
@@ -165,7 +165,7 @@ A pilot station is accepted when:
 
 - It boots unattended into the dashboard UI.
 - Companion app starts automatically.
-- Keyence SR-X scanner submits a barcode over TCP/IP.
+- Keyence SR-X scanner submits a barcode over TCP/IP to the companion listener on the station scanner port.
 - The barcode creates or resolves the correct part by `rueckmeldenummer`.
 - The measuring device produces one or more typed measurement values.
 - Dedicated stations can produce one measurement value, such as only `breite` or only `ueberstand`.

@@ -18,9 +18,13 @@ Every adapter implements:
 - `station_id`: the current station.
 - `parser_config`: the allowed measurement type catalog assigned to the station.
 - `emit(event)`: async callback used to hand normalized measurements to the runtime.
+- `emit_barcode_scan(event)`: async callback used by barcode scanner adapters.
 
 The runtime queues emitted events into the local SQLite outbox and sends them to
 `POST /api/companion/measurements`.
+
+Barcode scanner adapters use `emit_barcode_scan(...)` and the runtime forwards those events to
+`POST /api/companion/barcode-scans`.
 
 ## Canonical Event
 
@@ -68,17 +72,25 @@ adapter = SimulatorMeasurementAdapter.from_payload(
 `TcpLineMeasurementAdapter` connects to a TCP server, reads newline-delimited payloads, parses them,
 and emits canonical measurement events. If the connection drops, it marks itself degraded and retries.
 
-```python
-from slf_trace.companion.adapters.tcp import TcpLineAdapterConfig, TcpLineMeasurementAdapter
+Station-specific `adapter_config` example:
 
-adapter = TcpLineMeasurementAdapter(
-    TcpLineAdapterConfig(
-        host="10.0.0.50",
-        port=9000,
-        rueckmeldenummer="RM-DEV-1",
-    )
-)
+```json
+[
+  {
+    "type": "tcp_line",
+    "enabled": true,
+    "name": "tcp-line",
+    "host": "10.0.0.50",
+    "port": 9000,
+    "measurement_type": "breite",
+    "encoding": "utf-8",
+    "reconnect_delay_seconds": 2.0
+  }
+]
 ```
+
+The TCP line payload is parsed by the same parser layer as simulator payloads. For example,
+`breite=12.4` is valid when `breite` is assigned to that station.
 
 ### Serial Line Adapter
 
@@ -86,7 +98,7 @@ adapter = TcpLineMeasurementAdapter(
 optional `pyserial` package in the station companion environment:
 
 ```bash
-python -m pip install pyserial
+python -m pip install -e ".[serial]"
 ```
 
 Example:
@@ -102,6 +114,46 @@ adapter = SerialLineMeasurementAdapter(
     )
 )
 ```
+
+`SerialRequestMeasurementAdapter` supports devices that return one value after a command. The
+legacy Breite station behavior is represented by these defaults: COM port, 4800 baud, 7 data bits,
+even parity, 2 stop bits, send `?\r`, read one line, parse the line as a decimal value.
+
+Station-specific `adapter_config` example:
+
+```json
+[
+  {
+    "type": "serial_request",
+    "enabled": true,
+    "name": "breite-serial",
+    "port": "COM5",
+    "command": "?\\r",
+    "measurement_type": "breite",
+    "baudrate": 4800,
+    "bytesize": 7,
+    "parity": "E",
+    "stopbits": 2.0,
+    "timeout_seconds": 2.0,
+    "poll_interval_seconds": 2.0,
+    "encoding": "utf-8"
+  }
+]
+```
+
+### Keyence SR-X TCP Barcode Scanner
+
+`TcpBarcodeScannerAdapter` listens for a scanner connection on the station's scanner port and
+forwards barcode lines to the companion barcode API. Heartbeat messages are tracked in adapter
+health and ignored as scans.
+
+Station-specific fields live on the station record, not in `adapter_config`:
+
+- `scanner_host`: expected scanner IP address, used as a peer filter when set.
+- `scanner_port`: local port the companion listens on. The scanner connects to this port.
+- `scanner_protocol`: informational protocol label such as `Keyence SR-X TCP`.
+
+The companion automatically builds the scanner listener from these station fields.
 
 ### SMB1 Polling Adapter
 

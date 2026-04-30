@@ -4,7 +4,11 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from slf_trace.companion.adapters.base import MeasurementEvent, MeasurementEventValue
+from slf_trace.companion.adapters.base import (
+    BarcodeScanEvent,
+    MeasurementEvent,
+    MeasurementEventValue,
+)
 from slf_trace.companion.outbox import Outbox
 from slf_trace.companion.runtime import (
     CompanionRuntime,
@@ -20,10 +24,18 @@ class FakeClient:
         self.station_config_calls = []
         self.heartbeats = []
         self.events = []
+        self.barcode_scans = []
 
     async def fetch_station_config(self, station_id: int):
         self.station_config_calls.append(station_id)
-        return {"station_id": station_id, "name": "Station 1", "measurement_types": []}
+        return {
+            "station_id": station_id,
+            "name": "Station 1",
+            "scanner_host": None,
+            "scanner_port": None,
+            "scanner_protocol": None,
+            "measurement_types": [],
+        }
 
     async def post_heartbeat(self, payload):
         self.heartbeats.append(payload)
@@ -34,6 +46,8 @@ class FakeClient:
             self.fail_first_event = False
             raise httpx.ConnectError("offline")
         self.events.append((endpoint, payload))
+        if endpoint == "/api/companion/barcode-scans":
+            self.barcode_scans.append(payload)
         return {"status": "accepted"}
 
 
@@ -156,6 +170,9 @@ def test_runtime_builds_adapters_from_station_config(tmp_path, monkeypatch) -> N
     runtime.station_config = {
         "station_id": 1,
         "name": "Station 1",
+        "scanner_host": "10.0.0.21",
+        "scanner_port": 9004,
+        "scanner_protocol": "Keyence SR-X TCP",
         "adapters": [
             {
                 "type": "smb1_polling",
@@ -172,5 +189,22 @@ def test_runtime_builds_adapters_from_station_config(tmp_path, monkeypatch) -> N
 
     runtime.configure_adapters_from_station_config()
 
-    assert len(runtime.adapters) == 1
+    assert len(runtime.adapters) == 2
     assert runtime.adapters[0].name == "smb1-polling"
+    assert runtime.adapters[1].name == "keyence-srx-scanner"
+
+
+def test_runtime_queues_barcode_scan_events(tmp_path) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+    runtime.enqueue_barcode_scan_event(
+        BarcodeScanEvent(
+            station_id=1,
+            source_type="keyence_srx",
+            rueckmeldenummer="RM-1",
+            raw_payload="RM-1",
+        )
+    )
+
+    queued = runtime.outbox.pending()
+    assert queued[0].endpoint == "/api/companion/barcode-scans"
+    assert queued[0].payload["rueckmeldenummer"] == "RM-1"

@@ -83,6 +83,26 @@ class RawPayloadEvent:
 
 
 @dataclass(frozen=True)
+class BarcodeScanEvent:
+    station_id: int
+    source_type: str
+    rueckmeldenummer: str
+    scanned_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    raw_payload: str | None = None
+
+    def as_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "station_id": self.station_id,
+            "rueckmeldenummer": self.rueckmeldenummer,
+            "source_type": self.source_type,
+            "scanned_at": self.scanned_at.isoformat(),
+        }
+        if self.raw_payload is not None:
+            payload["raw_payload"] = self.raw_payload
+        return payload
+
+
+@dataclass(frozen=True)
 class AdapterStatus:
     name: str
     state: AdapterState
@@ -100,6 +120,7 @@ class AdapterStatus:
 
 AdapterEmit = Callable[[MeasurementEvent], Awaitable[None]]
 RawPayloadEmit = Callable[[RawPayloadEvent], Awaitable[None]]
+BarcodeScanEmit = Callable[[BarcodeScanEvent], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -108,6 +129,7 @@ class AdapterContext:
     emit: AdapterEmit
     parser_config: ParserConfig
     emit_raw_payload: RawPayloadEmit | None = None
+    emit_barcode_scan: BarcodeScanEmit | None = None
 
 
 class MeasurementAdapter(ABC):

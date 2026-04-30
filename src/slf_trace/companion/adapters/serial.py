@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from slf_trace.companion.adapters.base import (
@@ -8,6 +9,8 @@ from slf_trace.companion.adapters.base import (
     AdapterState,
     AdapterStatus,
     MeasurementAdapter,
+    MeasurementEvent,
+    MeasurementEventValue,
     parse_payload_event,
 )
 
@@ -21,6 +24,23 @@ class SerialLineAdapterConfig:
     baudrate: int = 9600
     timeout_seconds: float = 1.0
     reconnect_delay_seconds: float = 2.0
+    encoding: str = "utf-8"
+
+
+@dataclass(frozen=True)
+class SerialRequestAdapterConfig:
+    port: str
+    measurement_type: str
+    name: str = "serial-request"
+    source_type: str = "serial"
+    rueckmeldenummer: str | None = None
+    command: str = "?\r"
+    baudrate: int = 4800
+    bytesize: int = 7
+    parity: str = "E"
+    stopbits: float = 2.0
+    timeout_seconds: float = 2.0
+    poll_interval_seconds: float = 2.0
     encoding: str = "utf-8"
 
 
@@ -97,6 +117,103 @@ class SerialLineMeasurementAdapter(MeasurementAdapter):
             )
         except TimeoutError:
             return
+
+
+class SerialRequestMeasurementAdapter(MeasurementAdapter):
+    def __init__(self, config: SerialRequestAdapterConfig) -> None:
+        self.config = config
+        self.name = config.name
+        self._stop_event = asyncio.Event()
+        self._status = AdapterStatus(name=self.name, state=AdapterState.STOPPED)
+
+    async def start(self, context: AdapterContext) -> None:
+        self._stop_event.clear()
+        self._status = AdapterStatus(name=self.name, state=AdapterState.STARTING)
+
+        while not self._stop_event.is_set():
+            try:
+                value = await asyncio.to_thread(self.read_once)
+                emitted = await self.emit_measurement(context, value)
+                self._status = AdapterStatus(
+                    name=self.name,
+                    state=AdapterState.ONLINE,
+                    message="Measurement emitted" if emitted else "No serial response",
+                    last_event_at=datetime.now(UTC) if emitted else self._status.last_event_at,
+                )
+            except (OSError, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+                self._status = AdapterStatus(
+                    name=self.name,
+                    state=AdapterState.DEGRADED,
+                    last_error=str(exc),
+                )
+
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self.config.poll_interval_seconds,
+                )
+            except TimeoutError:
+                continue
+
+        self._status = AdapterStatus(name=self.name, state=AdapterState.STOPPED)
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+
+    def health(self) -> AdapterStatus:
+        return self._status
+
+    async def poll_once(self, context: AdapterContext) -> bool:
+        if self.config.measurement_type not in context.parser_config.measurement_types:
+            raise ValueError(
+                f"Unsupported measurement type for station: {self.config.measurement_type}."
+            )
+
+        return await self.emit_measurement(context, self.read_once())
+
+    async def emit_measurement(self, context: AdapterContext, value: Decimal) -> bool:
+        event = MeasurementEvent(
+            station_id=context.station_id,
+            source_type=self.config.source_type,
+            measured_at=datetime.now(UTC),
+            rueckmeldenummer=self.config.rueckmeldenummer,
+            values=[
+                MeasurementEventValue(
+                    measurement_type=self.config.measurement_type,
+                    value=value,
+                    unit=context.parser_config.default_unit,
+                )
+            ],
+        )
+        await context.emit(event)
+        return True
+
+    def read_once(self) -> Decimal:
+        serial_module = _load_serial_module()
+        connection = serial_module.Serial(
+            self.config.port,
+            baudrate=self.config.baudrate,
+            bytesize=self.config.bytesize,
+            parity=self.config.parity,
+            stopbits=self.config.stopbits,
+            timeout=self.config.timeout_seconds,
+        )
+        try:
+            connection.write(self.config.command.encode(self.config.encoding))
+            if hasattr(connection, "flush"):
+                connection.flush()
+            line = connection.readline()
+        finally:
+            connection.close()
+
+        if not line:
+            raise ValueError("Serial device returned no measurement.")
+
+        raw_value = line.decode(self.config.encoding).strip()
+        try:
+            return Decimal(raw_value.replace(",", "."))
+        except InvalidOperation as exc:
+            raise ValueError(f"Serial measurement is not numeric: {raw_value!r}.") from exc
 
 
 def _load_serial_module() -> Any:

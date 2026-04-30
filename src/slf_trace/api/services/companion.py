@@ -74,6 +74,14 @@ async def record_barcode_scan(
     payload: BarcodeScanRequest,
 ) -> tuple[Part, bool]:
     await get_station_or_404(session, payload.station_id)
+    if payload.raw_payload is not None:
+        raw_payload = RawPayload(
+            station_id=payload.station_id,
+            source_type=payload.source_type,
+            payload_hash=sha256(payload.raw_payload.encode("utf-8")).hexdigest(),
+            content=payload.raw_payload,
+        )
+        session.add(raw_payload)
     return await get_or_create_part(session, payload.rueckmeldenummer)
 
 

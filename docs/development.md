@@ -107,6 +107,9 @@ The measurement history view searches by `Rückmeldenummer` and can optionally n
 station. Selecting a measurement with a linked raw payload loads the raw payload detail
 automatically; the raw payload ID input remains available for direct debugging lookup.
 
+Static branding and other user-facing images live in `src/slf_trace/ui/assets/`. Load them through
+`importlib.resources` so Panel UIs can reuse them without hard-coded paths.
+
 ## Run the Companion Placeholder
 
 Start the station companion runtime:
@@ -135,6 +138,12 @@ python -m pip install -e ".[smb]"
 
 The station host also needs the `smbclient` command line tool if delete-after-processing uses the
 fallback delete path.
+
+For serial measuring devices, install the optional dependency:
+
+```bash
+python -m pip install -e ".[serial]"
+```
 
 ## Test and Lint
 
@@ -220,9 +229,15 @@ curl -X POST http://localhost:8000/api/companion/barcode-scans \
   -d '{
     "station_id": 1,
     "rueckmeldenummer": "DEV-RM-0001",
-    "source_type": "keyence_srx"
+    "source_type": "keyence_srx",
+    "raw_payload": "RM-DEV-0001",
+    "scanned_at": "2026-04-29T15:00:00+02:00"
   }'
 ```
+
+For a station with a Keyence SR-X scanner, the companion listens on `scanner_port` and forwards
+incoming scan lines to this endpoint. `scanner_host` is the expected scanner IP address when you
+want to restrict which peer can connect.
 
 Submit a raw payload:
 

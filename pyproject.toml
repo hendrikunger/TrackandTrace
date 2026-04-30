@@ -29,6 +29,9 @@ dev = [
 smb = [
     "pysmb>=1.2.10",
 ]
+serial = [
+    "pyserial>=3.5",
+]
 
 [project.scripts]
 slf-trace-api = "slf_trace.api.main:run"
@@ -37,6 +40,7 @@ slf-trace-ui = "slf_trace.ui.main:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/slf_trace"]
+include = ["src/slf_trace/ui/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

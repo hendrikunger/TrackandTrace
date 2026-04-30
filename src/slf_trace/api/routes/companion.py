@@ -43,6 +43,9 @@ async def get_station_config(station_id: int, session: SessionDep) -> StationCon
         location=station.location,
         machine_name=station.machine_name,
         machine_type=station.machine_type,
+        scanner_host=station.scanner_host,
+        scanner_port=station.scanner_port,
+        scanner_protocol=station.scanner_protocol,
         active=station.active,
         adapters=station.adapter_config or [],
         measurement_types=[
@@ -92,6 +95,7 @@ async def post_barcode_scan(
             "rueckmeldenummer": part.rueckmeldenummer,
             "created": created,
             "source_type": payload.source_type,
+            "scanned_at": payload.scanned_at.isoformat() if payload.scanned_at else None,
         },
     )
     return BarcodeScanResponse(

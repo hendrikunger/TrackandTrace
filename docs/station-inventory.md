@@ -11,8 +11,8 @@ Stations are configured centrally and fetched by the companion app during bootst
 - `machine_name`
 - `machine_type`
 - `measurement_interface`, for example `SMB1`, `SMB2`, `TCP/IP`, `serial`, `local_file`
-- `scanner_host`
-- `scanner_port`
+- `scanner_host`, expected scanner IP address for the TCP listener
+- `scanner_port`, local port the companion listens on for scanner connections
 - `scanner_protocol`, for example `Keyence SR-X TCP`
 - `adapter_config`, the per-station companion adapter definitions
 - `payload_format`

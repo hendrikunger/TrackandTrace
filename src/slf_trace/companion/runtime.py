@@ -9,11 +9,15 @@ import httpx
 from slf_trace import __version__
 from slf_trace.companion.adapters.base import (
     AdapterContext,
+    BarcodeScanEvent,
     MeasurementAdapter,
     MeasurementEvent,
     RawPayloadEvent,
 )
-from slf_trace.companion.adapters.factory import build_adapters_from_config
+from slf_trace.companion.adapters.factory import (
+    build_adapters_from_config,
+    build_scanner_adapter_from_station_config,
+)
 from slf_trace.companion.client import CompanionClient
 from slf_trace.companion.outbox import Outbox, OutboxEvent
 from slf_trace.config import Settings, get_settings
@@ -93,11 +97,17 @@ class CompanionRuntime:
     def enqueue_raw_payload_event(self, event: RawPayloadEvent) -> int:
         return self.enqueue_event("/api/companion/raw-payloads", event.as_payload())
 
+    def enqueue_barcode_scan_event(self, event: BarcodeScanEvent) -> int:
+        return self.enqueue_event("/api/companion/barcode-scans", event.as_payload())
+
     async def handle_adapter_event(self, event: MeasurementEvent) -> None:
         self.enqueue_measurement_event(event)
 
     async def handle_raw_payload_event(self, event: RawPayloadEvent) -> None:
         self.enqueue_raw_payload_event(event)
+
+    async def handle_barcode_scan_event(self, event: BarcodeScanEvent) -> None:
+        self.enqueue_barcode_scan_event(event)
 
     async def flush_outbox_once(self, limit: int = 50) -> int:
         sent_count = 0
@@ -149,6 +159,7 @@ class CompanionRuntime:
             emit=self.handle_adapter_event,
             parser_config=parser_config,
             emit_raw_payload=self.handle_raw_payload_event,
+            emit_barcode_scan=self.handle_barcode_scan_event,
         )
         await asyncio.gather(*(adapter.start(context) for adapter in self.adapters))
 
@@ -175,10 +186,14 @@ class CompanionRuntime:
         return ParserConfig(measurement_types=measurement_types)
 
     def configure_adapters_from_station_config(self) -> None:
-        if self.adapters:
-            return
-        adapter_configs = (self.station_config or {}).get("adapters", [])
-        self.adapters = build_adapters_from_config(adapter_configs)
+        if not self.adapters:
+            adapter_configs = (self.station_config or {}).get("adapters", [])
+            self.adapters = build_adapters_from_config(adapter_configs)
+        scanner_adapter = build_scanner_adapter_from_station_config(self.station_config or {})
+        if scanner_adapter is not None and all(
+            adapter.name != scanner_adapter.name for adapter in self.adapters
+        ):
+            self.adapters.append(scanner_adapter)
 
 
 def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeConfig:

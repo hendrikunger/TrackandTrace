@@ -123,4 +123,5 @@ See `docs/development.md` for the full development runbook. See `docs/api-contra
 initial station companion API contract and `docs/station-inventory.md` for station setup. See
 `docs/live-events.md` for WebSocket event payloads and `docs/companion-runtime.md` for the
 station-side runtime. See `docs/parser-layer.md` for raw payload parsing and
-`docs/measurement-adapters.md` for TCP, serial, and simulator adapter development.
+`docs/measurement-adapters.md` for TCP, serial, and simulator adapter development. UI branding
+assets live in `src/slf_trace/ui/assets/`.
