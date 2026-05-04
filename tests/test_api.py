@@ -42,6 +42,7 @@ async def test_openapi_lists_admin_routes() -> None:
     paths = response.json()["paths"]
     assert "/api/stations" in paths
     assert "/api/stations/{station_id}" in paths
+    assert "/api/stations/{station_id}/events" in paths
     assert "/api/stations/{station_id}/config" in paths
     assert "/api/stations/{station_id}/measurement-types" in paths
     assert "/api/measurement-types" in paths

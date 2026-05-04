@@ -1,0 +1,17 @@
+[Unit]
+Description=SLF Track and Trace Station Companion
+After=network-online.target slf-trace-ui.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=slf-trace
+Group=slf-trace
+WorkingDirectory=/opt/slf-trace/current
+EnvironmentFile=/etc/slf-trace/panel.env
+ExecStart=/opt/slf-trace/current/env/bin/slf-trace-companion
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

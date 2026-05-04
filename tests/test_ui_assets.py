@@ -15,8 +15,6 @@ def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
         kiosk_workflow_title(
             {
                 "name": "BREITE-01",
-                "machine_name": "Station 1",
-                "machine_type": "dedicated_measurement",
                 "measurement_type_codes": ["breite"],
             }
         )
@@ -26,8 +24,6 @@ def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
         kiosk_workflow_title(
             {
                 "name": "FERTIG-01",
-                "machine_name": "Station 2",
-                "machine_type": "dedicated_measurement",
                 "measurement_type_codes": ["ueberstand"],
             }
         )

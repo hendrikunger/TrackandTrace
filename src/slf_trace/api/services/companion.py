@@ -11,6 +11,7 @@ from slf_trace.api.schemas.companion import (
     MeasurementRequest,
     ParsedMeasurementRequest,
     RawPayloadRequest,
+    StationEventRequest,
     StationHeartbeatRequest,
 )
 from slf_trace.models import (
@@ -20,6 +21,7 @@ from slf_trace.models import (
     Part,
     RawPayload,
     Station,
+    StationEvent,
     StationHeartbeat,
     StationMeasurementType,
 )
@@ -61,12 +63,27 @@ async def record_heartbeat(
     heartbeat = StationHeartbeat(
         station_id=payload.station_id,
         status=payload.status,
+        hostname=payload.hostname,
         companion_version=payload.companion_version,
         adapter_status=payload.adapter_status,
     )
     session.add(heartbeat)
     await session.flush()
     return heartbeat
+
+
+async def record_station_event(
+    session: AsyncSession,
+    payload: StationEventRequest,
+) -> StationEvent:
+    await get_station_or_404(session, payload.station_id)
+    event_values = payload.model_dump(exclude={"occurred_at"})
+    if payload.occurred_at is not None:
+        event_values["occurred_at"] = payload.occurred_at
+    event = StationEvent(**event_values)
+    session.add(event)
+    await session.flush()
+    return event
 
 
 async def record_barcode_scan(
@@ -180,9 +197,28 @@ async def parse_and_record_measurement(
     try:
         parsed_values = parse_measurement_payload(raw_payload.content, config)
     except PayloadParseError as exc:
+        event = await record_station_event(
+            session,
+            StationEventRequest(
+                station_id=payload.station_id,
+                event_type="parser.failure",
+                severity="error",
+                message=str(exc),
+                context={
+                    "raw_payload_id": payload.raw_payload_id,
+                    "idempotency_key": payload.idempotency_key,
+                    "source_type": payload.source_type or raw_payload.source_type,
+                },
+            ),
+        )
+        await session.commit()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"message": str(exc), "raw_payload_id": payload.raw_payload_id},
+            detail={
+                "message": str(exc),
+                "raw_payload_id": payload.raw_payload_id,
+                "station_event_id": event.id,
+            },
         ) from exc
 
     measurement_payload = MeasurementRequest(

@@ -7,12 +7,7 @@ from slf_trace.api.schemas.stations import StationCreate, StationResponse, Stati
 from slf_trace.models import MeasurementType, Station, StationMeasurementType
 
 STATION_MUTABLE_FIELDS = (
-    "hostname",
     "location",
-    "operating_system",
-    "machine_name",
-    "machine_type",
-    "measurement_interface",
     "scanner_host",
     "scanner_port",
     "scanner_protocol",
@@ -161,12 +156,7 @@ async def station_to_response(session: AsyncSession, station: Station) -> Statio
     return StationResponse(
         id=station.id,
         name=station.name,
-        hostname=station.hostname,
         location=station.location,
-        operating_system=station.operating_system,
-        machine_name=station.machine_name,
-        machine_type=station.machine_type,
-        measurement_interface=station.measurement_interface,
         scanner_host=station.scanner_host,
         scanner_port=station.scanner_port,
         scanner_protocol=station.scanner_protocol,

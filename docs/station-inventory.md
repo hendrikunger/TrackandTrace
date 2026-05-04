@@ -5,12 +5,7 @@ Stations are configured centrally and fetched by the companion app during bootst
 ## Captured Fields
 
 - `name`
-- `hostname`
 - `location`
-- `operating_system`, for example `Windows 11` or `Ubuntu 24.04 LTS`
-- `machine_name`
-- `machine_type`
-- `measurement_interface`, for example `SMB1`, `SMB2`, `TCP/IP`, `serial`, `local_file`
 - `scanner_host`, expected scanner IP address for the TCP listener
 - `scanner_port`, local port the companion listens on for scanner connections
 - `scanner_protocol`, for example `Keyence SR-X TCP`
@@ -20,6 +15,9 @@ Stations are configured centrally and fetched by the companion app during bootst
 - `network_notes`
 - `active`
 - `measurement_type_codes`, the measurement types this station is allowed to submit
+
+The companion reports its current `hostname` with every heartbeat. Hostname is runtime diagnostics,
+not central station configuration.
 
 ## API
 
@@ -38,12 +36,7 @@ POST /api/stations
 ```json
 {
   "name": "BREITE-01",
-  "hostname": "breite-01",
   "location": "Line 1",
-  "operating_system": "Ubuntu 24.04 LTS",
-  "machine_name": "Breite Station",
-  "machine_type": "dedicated_measurement",
-  "measurement_interface": "SMB1",
   "scanner_host": "10.0.0.21",
   "scanner_port": 9004,
   "scanner_protocol": "Keyence SR-X TCP",

@@ -14,6 +14,8 @@ from slf_trace.api.schemas.companion import (
     RawPayloadRequest,
     RawPayloadResponse,
     StationConfigResponse,
+    StationEventRequest,
+    StationEventResponse,
     StationHeartbeatRequest,
     StationHeartbeatResponse,
 )
@@ -25,6 +27,7 @@ from slf_trace.api.services.companion import (
     record_heartbeat,
     record_measurement,
     record_raw_payload,
+    record_station_event,
 )
 from slf_trace.db import get_session
 
@@ -39,10 +42,7 @@ async def get_station_config(station_id: int, session: SessionDep) -> StationCon
     return StationConfigResponse(
         station_id=station.id,
         name=station.name,
-        hostname=station.hostname,
         location=station.location,
-        machine_name=station.machine_name,
-        machine_type=station.machine_type,
         scanner_host=station.scanner_host,
         scanner_port=station.scanner_port,
         scanner_protocol=station.scanner_protocol,
@@ -71,6 +71,7 @@ async def post_heartbeat(
         {
             "heartbeat_id": heartbeat.id,
             "status": heartbeat.status,
+            "hostname": heartbeat.hostname,
             "companion_version": heartbeat.companion_version,
             "adapter_status": heartbeat.adapter_status,
         },
@@ -78,6 +79,29 @@ async def post_heartbeat(
     return StationHeartbeatResponse(
         station_id=heartbeat.station_id,
         heartbeat_id=heartbeat.id,
+    )
+
+
+@router.post("/events", response_model=StationEventResponse)
+async def post_station_event(
+    payload: StationEventRequest,
+    session: SessionDep,
+) -> StationEventResponse:
+    event = await record_station_event(session, payload)
+    await publish_event(
+        "station.event",
+        event.station_id,
+        {
+            "event_id": event.id,
+            "event_type": event.event_type,
+            "severity": event.severity,
+            "message": event.message,
+            "occurred_at": event.occurred_at.isoformat(),
+        },
+    )
+    return StationEventResponse(
+        station_id=event.station_id,
+        event_id=event.id,
     )
 
 

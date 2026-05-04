@@ -176,12 +176,7 @@ curl -X POST http://localhost:8000/api/stations \
   -H "Content-Type: application/json" \
   -d '{
     "name": "BREITE-DEV-02",
-    "hostname": "breite-dev-02",
     "location": "Development",
-    "operating_system": "Ubuntu 24.04 LTS",
-    "machine_name": "Breite Simulator",
-    "machine_type": "dedicated_measurement",
-    "measurement_interface": "local_file",
     "scanner_host": "10.0.0.21",
     "scanner_port": 9004,
     "scanner_protocol": "Keyence SR-X TCP",

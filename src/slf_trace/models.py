@@ -35,12 +35,7 @@ class Station(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
-    hostname: Mapped[str | None] = mapped_column(String(255))
     location: Mapped[str | None] = mapped_column(String(255))
-    operating_system: Mapped[str | None] = mapped_column(String(80))
-    machine_name: Mapped[str | None] = mapped_column(String(255))
-    machine_type: Mapped[str | None] = mapped_column(String(120))
-    measurement_interface: Mapped[str | None] = mapped_column(String(80))
     scanner_host: Mapped[str | None] = mapped_column(String(255))
     scanner_port: Mapped[int | None]
     scanner_protocol: Mapped[str | None] = mapped_column(String(80))
@@ -53,6 +48,7 @@ class Station(TimestampMixin, Base):
     measurements: Mapped[list["Measurement"]] = relationship(back_populates="station")
     raw_payloads: Mapped[list["RawPayload"]] = relationship(back_populates="station")
     heartbeats: Mapped[list["StationHeartbeat"]] = relationship(back_populates="station")
+    events: Mapped[list["StationEvent"]] = relationship(back_populates="station")
     measurement_type_links: Mapped[list["StationMeasurementType"]] = relationship(
         back_populates="station",
         cascade="all, delete-orphan",
@@ -94,6 +90,7 @@ class StationHeartbeat(Base):
         BigInteger, ForeignKey("stations.id"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(40), nullable=False)
+    hostname: Mapped[str | None] = mapped_column(String(255))
     companion_version: Mapped[str | None] = mapped_column(String(80))
     adapter_status: Mapped[dict[str, object] | None] = mapped_column(JSON)
     received_at: Mapped[datetime] = mapped_column(
@@ -101,6 +98,24 @@ class StationHeartbeat(Base):
     )
 
     station: Mapped[Station] = relationship(back_populates="heartbeats")
+
+
+class StationEvent(Base):
+    __tablename__ = "station_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    station_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("stations.id"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    severity: Mapped[str] = mapped_column(String(40), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    station: Mapped[Station] = relationship(back_populates="events")
 
 
 class MeasurementType(Base):

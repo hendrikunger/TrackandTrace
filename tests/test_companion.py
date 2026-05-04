@@ -99,6 +99,7 @@ async def test_runtime_builds_heartbeat_payload(tmp_path) -> None:
 
     assert payload["station_id"] == 1
     assert payload["status"] == "starting"
+    assert payload["hostname"]
     assert payload["companion_version"]
     assert payload["adapter_status"]["outbox_pending"] == 0
 
@@ -208,3 +209,20 @@ def test_runtime_queues_barcode_scan_events(tmp_path) -> None:
     queued = runtime.outbox.pending()
     assert queued[0].endpoint == "/api/companion/barcode-scans"
     assert queued[0].payload["rueckmeldenummer"] == "RM-1"
+
+
+def test_runtime_queues_station_diagnostic_events(tmp_path) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+
+    runtime.enqueue_station_event(
+        event_type="adapter.connection_failed",
+        severity="error",
+        message="Scanner connection failed.",
+        context={"adapter": "keyence-srx-scanner"},
+    )
+
+    queued = runtime.outbox.pending()
+    assert queued[0].endpoint == "/api/companion/events"
+    assert queued[0].payload["station_id"] == 1
+    assert queued[0].payload["event_type"] == "adapter.connection_failed"
+    assert queued[0].payload["context"] == {"adapter": "keyence-srx-scanner"}

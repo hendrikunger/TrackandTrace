@@ -5,12 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from slf_trace.api.schemas.admin import (
     StationConfigUpdate,
+    StationEventSummary,
     StationMeasurementTypeUpdate,
     StationSummary,
 )
 from slf_trace.api.schemas.stations import StationCreate, StationResponse, StationUpdate
 from slf_trace.api.services.admin import (
     get_station_summary,
+    list_station_events,
     list_station_summaries,
     update_station_config,
 )
@@ -43,6 +45,15 @@ async def create_station(
 @router.get("/{station_id}", response_model=StationSummary)
 async def get_station(station_id: int, session: SessionDep) -> StationSummary:
     return await get_station_summary(session, station_id)
+
+
+@router.get("/{station_id}/events", response_model=list[StationEventSummary])
+async def get_station_events(
+    station_id: int,
+    session: SessionDep,
+    limit: int = 50,
+) -> list[StationEventSummary]:
+    return await list_station_events(session, station_id, limit)
 
 
 @router.patch("/{station_id}", response_model=StationResponse)

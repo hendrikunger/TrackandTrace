@@ -31,6 +31,26 @@ Station inventory is managed through `/api/stations`; see `docs/station-inventor
 }
 ```
 
+## Station Event
+
+`POST /events`
+
+Stores central diagnostics for station-side failures and support events. Parser failures recorded
+by the central API also create station events so the raw payload and reason remain visible without
+opening the station panel immediately.
+
+```json
+{
+  "station_id": 1,
+  "event_type": "adapter.connection_failed",
+  "severity": "error",
+  "message": "Scanner connection failed.",
+  "context": {
+    "adapter": "keyence-srx-scanner"
+  }
+}
+```
+
 ## Barcode Scan
 
 `POST /barcode-scans`
@@ -119,7 +139,8 @@ The supervisor/admin UI uses the central database to review station health and t
 measurements.
 
 - `GET /api/stations` returns the station list with latest heartbeat, online/offline status,
-  adapter state, station config fields, and assigned measurement types.
+  health state/message, adapter state, latest diagnostics event, station config fields, and
+  assigned measurement types.
 - `GET /api/stations/{station_id}` returns the same detail for one station.
 - `PATCH /api/stations/{station_id}/config` updates centrally managed station configuration.
 - `PUT /api/stations/{station_id}/measurement-types` replaces the active measurement type

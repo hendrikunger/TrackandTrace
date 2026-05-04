@@ -1,7 +1,10 @@
 import asyncio
 import logging
 import platform
+import socket
 from dataclasses import dataclass
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -62,6 +65,7 @@ class CompanionRuntime:
         return {
             "station_id": self.config.station_id,
             "status": status,
+            "hostname": socket.gethostname(),
             "companion_version": __version__,
             "adapter_status": {
                 "runtime": status,
@@ -99,6 +103,25 @@ class CompanionRuntime:
 
     def enqueue_barcode_scan_event(self, event: BarcodeScanEvent) -> int:
         return self.enqueue_event("/api/companion/barcode-scans", event.as_payload())
+
+    def enqueue_station_event(
+        self,
+        *,
+        event_type: str,
+        severity: str,
+        message: str,
+        context: dict[str, Any] | None = None,
+    ) -> int:
+        return self.enqueue_event(
+            "/api/companion/events",
+            {
+                "station_id": self.config.station_id,
+                "event_type": event_type,
+                "severity": severity,
+                "message": message,
+                "context": context,
+            },
+        )
 
     async def handle_adapter_event(self, event: MeasurementEvent) -> None:
         self.enqueue_measurement_event(event)
@@ -210,8 +233,24 @@ def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeCo
     )
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+def configure_logging(settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+
+    if settings.companion_log_path:
+        log_path = Path(settings.companion_log_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(
+                log_path,
+                maxBytes=settings.companion_log_max_bytes,
+                backupCount=settings.companion_log_backup_count,
+                encoding="utf-8",
+            )
+        )
+
+    for handler in handlers:
+        handler.setFormatter(formatter)
+
+    logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)

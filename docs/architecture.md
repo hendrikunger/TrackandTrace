@@ -26,12 +26,7 @@ One row per physical measuring workplace.
 
 - `id`
 - `name`
-- `hostname`
 - `location`
-- `operating_system`
-- `machine_name`
-- `machine_type`
-- `measurement_interface`
 - `scanner_host`
 - `scanner_port`
 - `scanner_protocol`

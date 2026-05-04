@@ -12,6 +12,7 @@ from slf_trace.api.schemas.admin import (
     PartMeasurementHistory,
     RawPayloadDetail,
     StationConfigUpdate,
+    StationEventSummary,
     StationMeasurementTypeAssignment,
     StationSummary,
 )
@@ -22,12 +23,15 @@ from slf_trace.models import (
     Part,
     RawPayload,
     Station,
+    StationEvent,
     StationHeartbeat,
     StationMeasurementType,
 )
 
 STATION_ONLINE_WINDOW = timedelta(minutes=5)
 ONLINE_HEARTBEAT_STATUSES = {"online", "starting", "degraded"}
+PROBLEM_ADAPTER_STATES = {"degraded", "offline"}
+PROBLEM_EVENT_SEVERITIES = {"warning", "error", "critical"}
 
 
 def is_station_online(
@@ -55,9 +59,17 @@ async def list_station_summaries(session: AsyncSession) -> list[StationSummary]:
         .group_by(StationHeartbeat.station_id)
         .subquery()
     )
+    latest_event_at = (
+        select(
+            StationEvent.station_id,
+            func.max(StationEvent.occurred_at).label("occurred_at"),
+        )
+        .group_by(StationEvent.station_id)
+        .subquery()
+    )
 
     result = await session.execute(
-        select(Station, StationHeartbeat)
+        select(Station, StationHeartbeat, StationEvent)
         .outerjoin(
             latest_heartbeat_at,
             latest_heartbeat_at.c.station_id == Station.id,
@@ -66,6 +78,15 @@ async def list_station_summaries(session: AsyncSession) -> list[StationSummary]:
             StationHeartbeat,
             (StationHeartbeat.station_id == Station.id)
             & (StationHeartbeat.received_at == latest_heartbeat_at.c.received_at),
+        )
+        .outerjoin(
+            latest_event_at,
+            latest_event_at.c.station_id == Station.id,
+        )
+        .outerjoin(
+            StationEvent,
+            (StationEvent.station_id == Station.id)
+            & (StationEvent.occurred_at == latest_event_at.c.occurred_at),
         )
         .options(
             selectinload(Station.measurement_type_links).selectinload(
@@ -76,8 +97,8 @@ async def list_station_summaries(session: AsyncSession) -> list[StationSummary]:
     )
 
     summaries = []
-    for station, heartbeat in result.unique().all():
-        summaries.append(_station_summary(station, heartbeat))
+    for station, heartbeat, event in result.unique().all():
+        summaries.append(_station_summary(station, heartbeat, event))
     return summaries
 
 
@@ -89,6 +110,7 @@ async def get_station_summary(session: AsyncSession, station_id: int) -> Station
                 StationMeasurementType.measurement_type
             ),
             selectinload(Station.heartbeats),
+            selectinload(Station.events),
         )
         .where(Station.id == station_id)
     )
@@ -101,7 +123,12 @@ async def get_station_summary(session: AsyncSession, station_id: int) -> Station
         key=lambda heartbeat: heartbeat.received_at,
         default=None,
     )
-    return _station_summary(station, latest_heartbeat)
+    latest_event = max(
+        station.events,
+        key=lambda event: event.occurred_at,
+        default=None,
+    )
+    return _station_summary(station, latest_heartbeat, latest_event)
 
 
 async def update_station_config(
@@ -116,6 +143,7 @@ async def update_station_config(
                 StationMeasurementType.measurement_type
             ),
             selectinload(Station.heartbeats),
+            selectinload(Station.events),
         )
         .where(Station.id == station_id)
     )
@@ -132,7 +160,12 @@ async def update_station_config(
         key=lambda heartbeat: heartbeat.received_at,
         default=None,
     )
-    return _station_summary(station, latest_heartbeat)
+    latest_event = max(
+        station.events,
+        key=lambda event: event.occurred_at,
+        default=None,
+    )
+    return _station_summary(station, latest_heartbeat, latest_event)
 
 
 async def list_measurement_types(session: AsyncSession) -> list[MeasurementTypeSummary]:
@@ -280,21 +313,53 @@ async def get_raw_payload_detail(
     )
 
 
+async def list_station_events(
+    session: AsyncSession,
+    station_id: int,
+    limit: int = 50,
+) -> list[StationEventSummary]:
+    station = await session.get(Station, station_id)
+    if station is None:
+        raise _not_found(f"Station {station_id} was not found.")
+
+    result = await session.execute(
+        select(StationEvent)
+        .where(StationEvent.station_id == station_id)
+        .order_by(StationEvent.occurred_at.desc(), StationEvent.id.desc())
+        .limit(limit)
+    )
+    return [
+        StationEventSummary(
+            id=event.id,
+            station_id=event.station_id,
+            event_type=event.event_type,
+            severity=event.severity,
+            message=event.message,
+            context=event.context,
+            occurred_at=event.occurred_at,
+        )
+        for event in result.scalars()
+    ]
+
+
 def _station_summary(
     station: Station,
     heartbeat: StationHeartbeat | None,
+    latest_event: StationEvent | None,
 ) -> StationSummary:
     last_heartbeat_at = heartbeat.received_at if heartbeat is not None else None
     status_value = heartbeat.status if heartbeat is not None else None
+    online = is_station_online(status_value, last_heartbeat_at)
+    health_state, health_message = station_health(
+        online=online,
+        status_value=status_value,
+        adapter_status=heartbeat.adapter_status if heartbeat is not None else None,
+        latest_event=latest_event,
+    )
     return StationSummary(
         id=station.id,
         name=station.name,
-        hostname=station.hostname,
         location=station.location,
-        operating_system=station.operating_system,
-        machine_name=station.machine_name,
-        machine_type=station.machine_type,
-        measurement_interface=station.measurement_interface,
         scanner_host=station.scanner_host,
         scanner_port=station.scanner_port,
         scanner_protocol=station.scanner_protocol,
@@ -304,8 +369,15 @@ def _station_summary(
         network_notes=station.network_notes,
         active=station.active,
         status=status_value,
-        online=is_station_online(status_value, last_heartbeat_at),
+        health_state=health_state,
+        health_message=health_message,
+        online=online,
         last_heartbeat_at=last_heartbeat_at,
+        last_event_at=latest_event.occurred_at if latest_event is not None else None,
+        last_event_type=latest_event.event_type if latest_event is not None else None,
+        last_event_severity=latest_event.severity if latest_event is not None else None,
+        last_event_message=latest_event.message if latest_event is not None else None,
+        hostname=heartbeat.hostname if heartbeat is not None else None,
         companion_version=heartbeat.companion_version if heartbeat is not None else None,
         adapter_status=heartbeat.adapter_status if heartbeat is not None else None,
         measurement_types=[
@@ -321,6 +393,49 @@ def _station_summary(
             )
         ],
     )
+
+
+def station_health(
+    *,
+    online: bool,
+    status_value: str | None,
+    adapter_status: dict[str, object] | None,
+    latest_event: StationEvent | None = None,
+) -> tuple[str, str | None]:
+    if not online:
+        return "offline", "No recent online heartbeat."
+    if status_value == "degraded":
+        return "degraded", "Latest companion heartbeat reports degraded."
+
+    adapter_message = adapter_problem_message(adapter_status)
+    if adapter_message is not None:
+        return "degraded", adapter_message
+
+    if latest_event is not None and latest_event.severity in PROBLEM_EVENT_SEVERITIES:
+        return "degraded", f"{latest_event.event_type}: {latest_event.message}"
+
+    return "online", None
+
+
+def adapter_problem_message(adapter_status: dict[str, object] | None) -> str | None:
+    if not adapter_status:
+        return None
+    adapters = adapter_status.get("adapters")
+    if not isinstance(adapters, dict):
+        return None
+
+    for adapter_name, status_payload in sorted(adapters.items()):
+        if not isinstance(status_payload, dict):
+            continue
+        state = status_payload.get("state")
+        if state not in PROBLEM_ADAPTER_STATES:
+            continue
+        last_error = status_payload.get("last_error")
+        message = status_payload.get("message")
+        detail = last_error or message or f"state={state}"
+        return f"{adapter_name}: {detail}"
+
+    return None
 
 
 async def _measurement_types_for_codes(

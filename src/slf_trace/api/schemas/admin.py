@@ -19,15 +19,20 @@ class StationMeasurementTypeAssignment(BaseModel):
     active: bool
 
 
+class StationEventSummary(BaseModel):
+    id: int
+    station_id: int
+    event_type: str
+    severity: str
+    message: str
+    context: dict[str, Any] | None = None
+    occurred_at: datetime
+
+
 class StationSummary(BaseModel):
     id: int
     name: str
-    hostname: str | None = None
     location: str | None = None
-    operating_system: str | None = None
-    machine_name: str | None = None
-    machine_type: str | None = None
-    measurement_interface: str | None = None
     scanner_host: str | None = None
     scanner_port: int | None = None
     scanner_protocol: str | None = None
@@ -37,8 +42,15 @@ class StationSummary(BaseModel):
     network_notes: str | None = None
     active: bool
     status: str | None = None
+    health_state: str
+    health_message: str | None = None
     online: bool
     last_heartbeat_at: datetime | None = None
+    last_event_at: datetime | None = None
+    last_event_type: str | None = None
+    last_event_severity: str | None = None
+    last_event_message: str | None = None
+    hostname: str | None = None
     companion_version: str | None = None
     adapter_status: dict[str, Any] | None = None
     measurement_types: list[StationMeasurementTypeAssignment] = Field(default_factory=list)
@@ -46,12 +58,7 @@ class StationSummary(BaseModel):
 
 class StationConfigUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    hostname: str | None = Field(default=None, max_length=255)
     location: str | None = Field(default=None, max_length=255)
-    operating_system: str | None = Field(default=None, max_length=80)
-    machine_name: str | None = Field(default=None, max_length=255)
-    machine_type: str | None = Field(default=None, max_length=120)
-    measurement_interface: str | None = Field(default=None, max_length=80)
     scanner_host: str | None = Field(default=None, max_length=255)
     scanner_port: int | None = Field(default=None, ge=1, le=65535)
     scanner_protocol: str | None = Field(default=None, max_length=80)

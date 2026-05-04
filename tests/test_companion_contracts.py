@@ -9,6 +9,7 @@ from slf_trace.api.schemas.companion import (
     MeasurementRequest,
     RawPayloadRequest,
     StationConfigResponse,
+    StationEventRequest,
 )
 from slf_trace.db import get_session
 
@@ -63,6 +64,19 @@ def test_station_config_can_include_allowed_measurement_types() -> None:
     assert config.scanner_port == 9004
 
 
+def test_station_event_requires_diagnostic_message() -> None:
+    event = StationEventRequest(
+        station_id=1,
+        event_type="parser.failure",
+        severity="error",
+        message="Parser rejected payload.",
+        context={"raw_payload_id": 5},
+    )
+
+    assert event.severity == "error"
+    assert event.context == {"raw_payload_id": 5}
+
+
 @pytest.mark.asyncio
 async def test_measurement_route_validates_body_before_handler() -> None:
     app.dependency_overrides[get_session] = _fake_session
@@ -113,6 +127,7 @@ async def test_companion_routes_are_registered() -> None:
 
     paths = response.json()["paths"]
     assert "/api/companion/heartbeats" in paths
+    assert "/api/companion/events" in paths
     assert "/api/companion/barcode-scans" in paths
     assert "/api/companion/raw-payloads" in paths
     assert "/api/companion/measurements" in paths

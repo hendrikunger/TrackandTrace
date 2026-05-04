@@ -1,3 +1,3 @@
-from slf_trace.ui.main import build_app
+from slf_trace.ui.main import build_admin_app
 
-build_app().servable(title="SLF Track and Trace")
+build_admin_app().servable(title="SLF Track and Trace Admin")

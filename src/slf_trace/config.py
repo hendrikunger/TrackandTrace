@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     station_id: str | None = None
     server_url: str = "http://localhost:8000"
     companion_state_path: str = "companion_state.sqlite3"
+    companion_log_path: str | None = "logs/slf-trace-companion.log"
+    companion_log_max_bytes: int = 5_000_000
+    companion_log_backup_count: int = 5
     companion_heartbeat_interval_seconds: float = 10.0
     companion_outbox_retry_interval_seconds: float = 2.0
 

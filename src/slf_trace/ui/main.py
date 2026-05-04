@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from html import escape
 from importlib import resources
 from typing import Any
 from uuid import uuid4
@@ -15,7 +16,7 @@ import panel as pn
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from slf_trace.api.services.admin import is_station_online
+from slf_trace.api.services.admin import is_station_online, station_health
 from slf_trace.config import Settings, get_settings
 from slf_trace.models import (
     Measurement,
@@ -31,6 +32,37 @@ from slf_trace.ui.branding import load_logo_svg
 pn.extension("tabulator")
 
 _session_factory: sessionmaker[Session] | None = None
+_KIOSK_CSS_REGISTERED = False
+_ADMIN_TAB_STYLESHEET = """
+.bk-header {
+    gap: 6px;
+    padding: 0 0 6px 0;
+    margin-bottom: 10px;
+    border-bottom: 2px solid #cbd5e1 !important;
+}
+.bk-tab {
+    min-width: 112px;
+    padding: 10px 16px !important;
+    background: #e5e7eb !important;
+    border: 1px solid #cbd5e1 !important;
+    border-bottom-color: #94a3b8 !important;
+    border-radius: 6px 6px 0 0 !important;
+    color: #1f2937 !important;
+    font-size: 15px;
+    font-weight: 750;
+}
+.bk-tab:hover {
+    background: #dbeafe !important;
+    border-color: #93c5fd !important;
+    color: #111827 !important;
+}
+.bk-tab.bk-active {
+    background: #ffffff !important;
+    border-color: #64748b !important;
+    color: #0f766e !important;
+    box-shadow: inset 0 4px 0 #0f766e;
+}
+"""
 
 
 @contextmanager
@@ -51,19 +83,61 @@ def session_scope(settings: Settings) -> Iterator[Session]:
         session.close()
 
 
-def build_app() -> pn.Column:
+def build_app(*, kiosk: bool = False) -> pn.Column:
+    global _KIOSK_CSS_REGISTERED
     settings = get_settings()
+    if not _KIOSK_CSS_REGISTERED:
+        pn.config.raw_css.append(
+            """
+            :root {
+                --slf-ink: #111827;
+                --slf-muted: #4b5563;
+                --slf-border: #d1d5db;
+                --slf-surface: #f8fafc;
+                --slf-accent: #0f766e;
+                --slf-accent-dark: #115e59;
+            }
+            .slf-kiosk input {
+                font-size: 30px !important;
+                min-height: 72px;
+            }
+            .slf-kiosk .bk-btn {
+                font-size: 20px !important;
+                min-height: 64px;
+                font-weight: 700;
+            }
+            .slf-kiosk select {
+                min-height: 44px;
+            }
+            .slf-kiosk h2, .slf-kiosk h3 {
+                letter-spacing: 0;
+            }
+            """
+        )
+        _KIOSK_CSS_REGISTERED = True
     logo = pn.pane.SVG(load_logo_svg(), width=220, height=64, sizing_mode="fixed")
     header = pn.Row(
         logo,
         pn.Column(
-            pn.pane.Markdown("# SLF Track and Trace"),
-            pn.pane.Markdown(f"Environment: `{settings.app_env}`"),
+            pn.pane.HTML(
+                "<h1 style='margin:0;color:#111827;font-size:30px'>SLF Track and Trace</h1>"
+            ),
+            pn.pane.HTML(
+                f"<div style='color:#4b5563'>Environment: "
+                f"<strong>{settings.app_env}</strong></div>"
+            ),
             sizing_mode="stretch_width",
             margin=(0, 0, 0, 0),
         ),
         sizing_mode="stretch_width",
         align="start",
+        styles={
+            "background": "#ffffff",
+            "border": "1px solid #d1d5db",
+            "border-radius": "8px",
+            "padding": "14px 18px",
+            "margin-bottom": "12px",
+        },
     )
 
     station_table = pn.widgets.Tabulator(
@@ -71,15 +145,15 @@ def build_app() -> pn.Column:
         editors={
             "id": None,
             "status": None,
+            "health": None,
             "name": None,
             "location": None,
-            "machine": None,
             "last_heartbeat": None,
             "measurement_types": None,
             "active": None,
         },
         selectable=1,
-        height=300,
+        height=180,
         sizing_mode="stretch_width",
     )
     station_name_status = pn.pane.Markdown(
@@ -92,27 +166,22 @@ def build_app() -> pn.Column:
     station_host_status = pn.pane.Markdown("", width=220)
     station_location_status = pn.pane.Markdown("", width=220)
     adapter_detail = pn.pane.JSON({}, name="Adapter State", depth=3, height=260)
+    diagnostics_table = pn.widgets.Tabulator(
+        value=pd.DataFrame(),
+        editors={
+            "occurred_at": None,
+            "severity": None,
+            "event_type": None,
+            "message": None,
+        },
+        height=180,
+        sizing_mode="stretch_width",
+    )
 
     input_width = 260
+    adapter_field_width = 260
     name = pn.widgets.TextInput(name="Name", width=input_width)
-    hostname = pn.widgets.TextInput(name="Hostname", width=input_width)
     location = pn.widgets.TextInput(name="Location", width=input_width)
-    operating_system = pn.widgets.Select(
-        name="Operating system",
-        options=["", "Ubuntu 24.04 LTS", "Windows 11"],
-        width=input_width,
-    )
-    machine_name = pn.widgets.TextInput(name="Machine name", width=input_width)
-    machine_type = pn.widgets.Select(
-        name="Machine type",
-        options=["", "dedicated_measurement", "scanner_only", "manual", "other"],
-        width=input_width,
-    )
-    measurement_interface = pn.widgets.Select(
-        name="Measurement interface",
-        options=["", "SMB1", "SMB2", "TCP/IP", "serial", "local_file", "other"],
-        width=input_width,
-    )
     scanner_host = pn.widgets.TextInput(name="Scanner IP", width=input_width)
     scanner_port = pn.widgets.IntInput(name="Listen port", start=0, end=65535, value=0, width=140)
     scanner_protocol = pn.widgets.Select(
@@ -147,11 +216,15 @@ def build_app() -> pn.Column:
         height=180,
         sizing_mode="stretch_width",
     )
-    adapter_enabled = pn.widgets.Checkbox(name="Enabled", value=True)
+    adapter_enabled = pn.widgets.Checkbox(
+        name="Enabled",
+        value=True,
+        width=adapter_field_width,
+    )
     adapter_name = pn.widgets.TextInput(
         name="Adapter name",
         value="smb1-polling",
-        width=input_width,
+        width=adapter_field_width,
     )
     adapter_type = pn.widgets.Select(
         name="Adapter type",
@@ -161,87 +234,149 @@ def build_app() -> pn.Column:
             "TCP/IP line": "tcp_line",
         },
         value="smb1_polling",
-        width=input_width,
+        width=adapter_field_width,
     )
-    adapter_server = pn.widgets.TextInput(name="SMB server", width=input_width)
-    adapter_share = pn.widgets.TextInput(name="Share", width=180)
+    adapter_server = pn.widgets.TextInput(name="SMB server", width=adapter_field_width)
+    adapter_share = pn.widgets.TextInput(name="Share", width=adapter_field_width)
     adapter_remote_dir = pn.widgets.TextInput(
         name="Remote directory",
         value="/ExcelAusgabe",
-        width=220,
+        width=adapter_field_width,
     )
     adapter_filename_pattern = pn.widgets.TextInput(
         name="Filename pattern",
         value=r"_(\d+)\.csv$",
-        width=220,
+        width=adapter_field_width,
     )
-    adapter_measurement_type = pn.widgets.Select(name="Measurement type", options=[], width=220)
+    adapter_measurement_type = pn.widgets.Select(
+        name="Measurement type",
+        options=[],
+        width=adapter_field_width,
+    )
     adapter_value_column_index = pn.widgets.IntInput(
         name="Value column index",
         start=0,
         value=13,
-        width=160,
+        width=adapter_field_width,
     )
-    adapter_username_env = pn.widgets.TextInput(name="Username env", value="SMB_USER", width=180)
+    adapter_username_env = pn.widgets.TextInput(
+        name="Username env",
+        value="SMB_USER",
+        width=adapter_field_width,
+    )
     adapter_password_env = pn.widgets.TextInput(
         name="Password env",
         value="SMB_PASSWORD",
-        width=180,
+        width=adapter_field_width,
     )
     adapter_encoding = pn.widgets.Select(
         name="Encoding",
         options=["cp1252", "utf-8", "latin-1"],
         value="cp1252",
-        width=140,
+        width=adapter_field_width,
     )
-    adapter_delimiter = pn.widgets.TextInput(name="Delimiter", value=";", width=100)
+    adapter_delimiter = pn.widgets.TextInput(
+        name="Delimiter",
+        value=";",
+        width=adapter_field_width,
+    )
     adapter_poll_interval = pn.widgets.FloatInput(
         name="Poll interval seconds",
         start=0.1,
         value=2.0,
-        width=170,
+        width=adapter_field_width,
     )
-    adapter_delete_after_success = pn.widgets.Checkbox(name="Delete after success", value=False)
-    adapter_delete_with_smbclient = pn.widgets.Checkbox(name="Use smbclient delete", value=True)
+    adapter_delete_after_success = pn.widgets.Checkbox(
+        name="Delete after success",
+        value=False,
+        width=adapter_field_width,
+    )
+    adapter_delete_with_smbclient = pn.widgets.Checkbox(
+        name="Use smbclient delete",
+        value=True,
+        width=adapter_field_width,
+    )
     adapter_processed_hashes_path = pn.widgets.TextInput(
         name="Processed hashes path",
         value="state/smb-processed.json",
-        width=260,
+        width=adapter_field_width,
     )
-    serial_port = pn.widgets.TextInput(name="Serial port", value="COM5", width=160)
-    serial_command = pn.widgets.TextInput(name="Command", value=r"?\r", width=120)
-    serial_baudrate = pn.widgets.IntInput(name="Baudrate", start=1, value=4800, width=130)
-    serial_bytesize = pn.widgets.Select(name="Data bits", options=[5, 6, 7, 8], value=7, width=110)
+    serial_port = pn.widgets.TextInput(
+        name="Serial port",
+        value="COM5",
+        width=adapter_field_width,
+    )
+    serial_command = pn.widgets.TextInput(
+        name="Command",
+        value=r"?\r",
+        width=adapter_field_width,
+    )
+    serial_baudrate = pn.widgets.IntInput(
+        name="Baudrate",
+        start=1,
+        value=4800,
+        width=adapter_field_width,
+    )
+    serial_bytesize = pn.widgets.Select(
+        name="Data bits",
+        options=[5, 6, 7, 8],
+        value=7,
+        width=adapter_field_width,
+    )
     serial_parity = pn.widgets.Select(
         name="Parity",
         options={"None": "N", "Even": "E", "Odd": "O", "Mark": "M", "Space": "S"},
         value="E",
-        width=120,
+        width=adapter_field_width,
     )
     serial_stopbits = pn.widgets.Select(
         name="Stop bits",
         options=[1.0, 1.5, 2.0],
         value=2.0,
-        width=120,
+        width=adapter_field_width,
     )
-    serial_timeout = pn.widgets.FloatInput(name="Timeout seconds", start=0.1, value=2.0, width=150)
-    tcp_host = pn.widgets.TextInput(name="TCP host", width=220)
-    tcp_port = pn.widgets.IntInput(name="TCP port", start=1, end=65535, value=9000, width=140)
+    serial_timeout = pn.widgets.FloatInput(
+        name="Timeout seconds",
+        start=0.1,
+        value=2.0,
+        width=adapter_field_width,
+    )
+    tcp_host = pn.widgets.TextInput(name="TCP host", width=adapter_field_width)
+    tcp_port = pn.widgets.IntInput(
+        name="TCP port",
+        start=1,
+        end=65535,
+        value=9000,
+        width=adapter_field_width,
+    )
     tcp_reconnect_delay = pn.widgets.FloatInput(
         name="Reconnect delay seconds",
         start=0.1,
         value=2.0,
-        width=190,
+        width=adapter_field_width,
     )
-    adapter_add_button = pn.widgets.Button(name="Add adapter", button_type="primary", width=130)
+    adapter_add_button = pn.widgets.Button(
+        name="Add adapter",
+        button_type="primary",
+        width=130,
+        disabled=True,
+    )
     adapter_remove_button = pn.widgets.Button(name="Remove", button_type="danger", width=110)
-    adapter_preview = pn.pane.JSON([], name="Adapter config", depth=4, height=260)
+    adapter_preview = pn.pane.JSON([], name="Adapter config", depth=4, height=220)
     adapter_message = pn.pane.Alert("", alert_type="info", visible=False)
 
     refresh_button = pn.widgets.Button(name="Refresh", button_type="primary")
     new_station_button = pn.widgets.Button(name="New station", button_type="primary")
-    save_station_button = pn.widgets.Button(name="Save station", button_type="success")
-    cancel_station_button = pn.widgets.Button(name="Cancel", button_type="light")
+    create_station_button = pn.widgets.Button(
+        name="Create station",
+        button_type="success",
+        visible=False,
+    )
+    cancel_station_button = pn.widgets.Button(
+        name="Cancel draft",
+        button_type="light",
+        visible=False,
+    )
     station_message = pn.pane.Alert("", alert_type="info", visible=False)
 
     rueckmeldenummer = pn.widgets.TextInput(name="Rückmeldenummer")
@@ -272,16 +407,21 @@ def build_app() -> pn.Column:
     raw_payload_detail = pn.pane.Markdown("Raw payload content appears here.")
     lookup_message = pn.pane.Alert("", alert_type="info", visible=False)
 
-    kiosk_station = pn.widgets.Select(name="Station", options={}, width=320)
+    kiosk_operator_logo = pn.pane.SVG(load_logo_svg(), width=132, height=44, sizing_mode="fixed")
+    kiosk_station = pn.widgets.Select(name="Station", options={}, visible=False)
     kiosk_refresh_button = pn.widgets.Button(name="Aktualisieren", button_type="light", width=130)
-    kiosk_reset_button = pn.widgets.Button(name="Neuer Vorgang", button_type="primary", width=140)
     kiosk_title = pn.pane.Markdown("## Station auswählen")
+    kiosk_station_badge = pn.pane.HTML(
+        "",
+        sizing_mode="stretch_width",
+        styles={"min-height": "42px"},
+    )
     kiosk_status = pn.pane.Markdown("Bereit.")
     kiosk_message = pn.pane.Alert("", alert_type="info", visible=False)
     kiosk_barcode = pn.widgets.TextInput(
-        name="Barcode / Rückmeldenummer",
-        placeholder="Barcode scannen oder eingeben",
-        width=360,
+        name="",
+        placeholder="Barcode scannen / Rückmeldenummer eingeben",
+        sizing_mode="stretch_width",
     )
     kiosk_barcode_button = pn.widgets.Button(
         name="Barcode übernehmen",
@@ -292,12 +432,6 @@ def build_app() -> pn.Column:
         name="Messwert prüfen",
         button_type="light",
         width=150,
-        disabled=True,
-    )
-    kiosk_upload_button = pn.widgets.Button(
-        name="Messung hochladen",
-        button_type="success",
-        width=180,
         disabled=True,
     )
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
@@ -319,6 +453,11 @@ def build_app() -> pn.Column:
         pane.object = text
         pane.alert_type = alert_type
         pane.visible = True
+
+    def set_station_draft_mode(enabled: bool) -> None:
+        new_station_button.visible = not enabled
+        create_station_button.visible = enabled
+        cancel_station_button.visible = enabled
 
     def refresh_stations(
         _: object | None = None,
@@ -343,9 +482,9 @@ def build_app() -> pn.Column:
                 {
                     "id": row["id"],
                     "status": "online" if row["online"] else "offline",
+                    "health": row["health_state"],
                     "name": row["name"],
                     "location": row["location"],
-                    "machine": row["machine_name"],
                     "last_heartbeat": row["last_heartbeat_at"],
                     "measurement_types": ", ".join(row["measurement_type_codes"]),
                     "active": row["active"],
@@ -363,19 +502,14 @@ def build_app() -> pn.Column:
             ].tolist()
             if matching_rows:
                 station_table.selection = [matching_rows[0]]
-        set_message(station_message, f"Loaded {len(station_rows)} stations.")
+        station_message.visible = False
 
     def fill_station_form(station: dict[str, Any]) -> None:
         nonlocal loading_station_form
         loading_station_form = True
         try:
             name.value = station["name"] or ""
-            hostname.value = station["hostname"] or ""
             location.value = station["location"] or ""
-            set_select_value(operating_system, station["operating_system"] or "")
-            machine_name.value = station["machine_name"] or ""
-            set_select_value(machine_type, station["machine_type"] or "")
-            set_select_value(measurement_interface, station["measurement_interface"] or "")
             scanner_host.value = station["scanner_host"] or ""
             scanner_port.value = station["scanner_port"] or 0
             set_select_value(scanner_protocol, station["scanner_protocol"] or "")
@@ -386,9 +520,8 @@ def build_app() -> pn.Column:
             loading_station_form = False
 
     def update_station_status_bar(station: dict[str, Any]) -> None:
-        status = "online" if station["online"] else "offline"
         station_name_status.object = f"**{station['name']}**"
-        station_health_status.object = f"Status: `{status}`"
+        station_health_status.object = f"Health: `{station['health_state']}`"
         station_heartbeat_status.object = (
             f"Last heartbeat: `{station['last_heartbeat_at'] or 'never'}`"
         )
@@ -396,19 +529,17 @@ def build_app() -> pn.Column:
             f"Companion: `{station['companion_version'] or 'unknown'}`"
         )
         station_host_status.object = f"Hostname: `{station['hostname'] or '-'}`"
-        station_location_status.object = f"Location: `{station['location'] or '-'}`"
+        station_location_status.object = (
+            f"Latest issue: `{station['health_message'] or station['location'] or '-'}`"
+        )
+        diagnostics_table.value = pd.DataFrame(station["recent_events"])
 
     def clear_station_form() -> None:
         nonlocal loading_station_form
         loading_station_form = True
         try:
             name.value = ""
-            hostname.value = ""
             location.value = ""
-            operating_system.value = ""
-            machine_name.value = ""
-            machine_type.value = ""
-            measurement_interface.value = ""
             scanner_host.value = ""
             scanner_port.value = 0
             scanner_protocol.value = ""
@@ -431,6 +562,7 @@ def build_app() -> pn.Column:
 
         selected_station_id = int(station_table.value.iloc[row_index]["id"])
         creating_station = False
+        set_station_draft_mode(False)
         station = next(
             row for row in station_rows if row["id"] == selected_station_id
         )
@@ -463,7 +595,7 @@ def build_app() -> pn.Column:
             return
 
         update_selected_station_row(values)
-        set_message(station_message, "Station config autosaved.")
+        station_message.visible = False
 
     def current_station_config_values() -> dict[str, Any]:
         station_name = name.value.strip()
@@ -476,12 +608,7 @@ def build_app() -> pn.Column:
 
         return {
             "name": station_name,
-            "hostname": hostname.value.strip() or None,
             "location": location.value.strip() or None,
-            "operating_system": operating_system.value.strip() or None,
-            "machine_name": machine_name.value.strip() or None,
-            "machine_type": machine_type.value.strip() or None,
-            "measurement_interface": measurement_interface.value.strip() or None,
             "scanner_host": scanner_host.value.strip() or None,
             "scanner_port": scanner_port.value or None,
             "scanner_protocol": scanner_protocol.value.strip() or None,
@@ -491,6 +618,7 @@ def build_app() -> pn.Column:
     def start_new_station(_: object | None = None) -> None:
         nonlocal creating_station, selected_station_id
         creating_station = True
+        set_station_draft_mode(True)
         selected_station_id = None
         station_table.selection = []
         clear_station_form()
@@ -501,20 +629,16 @@ def build_app() -> pn.Column:
         station_host_status.object = "Hostname: `-`"
         station_location_status.object = "Location: `-`"
         adapter_detail.object = {}
+        diagnostics_table.value = pd.DataFrame()
         set_message(station_message, "Enter station details, then save.")
 
     def cancel_new_station(_: object | None = None) -> None:
         nonlocal creating_station
         creating_station = False
+        set_station_draft_mode(False)
         station_table.selection = []
         clear_station_form()
         set_message(station_message, "New station cancelled.")
-
-    def save_station(_: object | None = None) -> None:
-        if creating_station:
-            create_station_from_form()
-            return
-        autosave_config()
 
     def create_station_from_form() -> None:
         nonlocal creating_station, selected_station_id
@@ -536,6 +660,7 @@ def build_app() -> pn.Column:
             return
 
         creating_station = False
+        set_station_draft_mode(False)
         selected_station_id = created_station_id
         refresh_stations(select_station_id=created_station_id)
         set_message(station_message, "Station created.")
@@ -550,6 +675,7 @@ def build_app() -> pn.Column:
             load_adapter_form(adapter_configs[0])
         else:
             reset_adapter_form()
+        update_adapter_action_state()
 
     def render_adapter_configs() -> None:
         adapter_table.value = pd.DataFrame(adapter_summary_rows(adapter_configs))
@@ -631,7 +757,12 @@ def build_app() -> pn.Column:
             adapter_processed_hashes_path.value = str(
                 config.get("processed_hashes_path") or "state/smb-processed.json"
             )
-            serial_port.value = str(config.get("port") or "COM5")
+            config_type = str(config.get("type") or "smb1_polling")
+            serial_port.value = (
+                str(config.get("port") or "COM5")
+                if config_type == "serial_request"
+                else "COM5"
+            )
             serial_command.value = str(config.get("command") or r"?\r")
             serial_baudrate.value = int(config.get("baudrate", 4800))
             serial_bytesize.value = int(config.get("bytesize", 7))
@@ -639,10 +770,11 @@ def build_app() -> pn.Column:
             serial_stopbits.value = float(config.get("stopbits", 2.0))
             serial_timeout.value = float(config.get("timeout_seconds", 2.0))
             tcp_host.value = str(config.get("host") or "")
-            tcp_port.value = int(config.get("port", 9000))
+            tcp_port.value = int(config.get("port", 9000)) if config_type == "tcp_line" else 9000
             tcp_reconnect_delay.value = float(config.get("reconnect_delay_seconds", 2.0))
         finally:
             loading_adapter_form = False
+        update_adapter_action_state()
 
     def current_adapter_values() -> dict[str, Any]:
         if adapter_type.value == "tcp_line":
@@ -781,6 +913,7 @@ def build_app() -> pn.Column:
     def autoupdate_adapter(_: object | None = None) -> None:
         if loading_adapter_form:
             return
+        update_adapter_action_state()
         if selected_adapter_index is None:
             return
 
@@ -790,6 +923,14 @@ def build_app() -> pn.Column:
             save_adapter_configs()
         except Exception as exc:  # noqa: BLE001
             set_message(adapter_message, f"Could not autosave adapter config: {exc}", "danger")
+
+    def update_adapter_action_state() -> None:
+        try:
+            current_adapter_values()
+        except Exception:  # noqa: BLE001
+            adapter_add_button.disabled = True
+        else:
+            adapter_add_button.disabled = False
 
     def remove_adapter(_: object | None = None) -> None:
         nonlocal selected_adapter_index
@@ -820,7 +961,6 @@ def build_app() -> pn.Column:
         row_index = matching_rows[0]
         table_data.loc[row_index, "name"] = station["name"]
         table_data.loc[row_index, "location"] = station["location"]
-        table_data.loc[row_index, "machine"] = station["machine_name"]
         table_data.loc[row_index, "active"] = station["active"]
         station_table.value = table_data
 
@@ -851,7 +991,7 @@ def build_app() -> pn.Column:
             return
 
         update_selected_station_measurement_types(measurement_types.value)
-        set_message(station_message, "Measurement type assignment autosaved.")
+        station_message.visible = False
 
     def update_selected_station_measurement_types(measurement_type_codes: list[str]) -> None:
         if selected_station_id is None:
@@ -934,6 +1074,7 @@ def build_app() -> pn.Column:
         if not kiosk_station.options:
             kiosk_station.value = None
             kiosk_title.object = "## Keine Messstation konfiguriert"
+            kiosk_station_badge.object = ""
             kiosk_status.object = "Aktive Messstation mit Messart zuweisen."
             return
 
@@ -942,14 +1083,9 @@ def build_app() -> pn.Column:
             if str(settings.station_id or "").isdigit()
             else None
         )
-        preferred_station_id = (
-            configured_station_id
-            if configured_station_id in kiosk_station.options.values()
-            else kiosk_current_station_id
-        )
-        if preferred_station_id in kiosk_station.options.values():
-            kiosk_station.value = preferred_station_id
-        elif kiosk_station.value not in kiosk_station.options.values():
+        if configured_station_id in kiosk_station.options.values():
+            kiosk_station.value = configured_station_id
+        else:
             kiosk_station.value = next(iter(kiosk_station.options.values()))
         load_kiosk_station()
 
@@ -961,8 +1097,8 @@ def build_app() -> pn.Column:
         kiosk_current_barcode = None
         station = station_row_by_id(kiosk_current_station_id)
         kiosk_title.object = f"## {kiosk_workflow_title(station)}"
+        kiosk_station_badge.object = kiosk_station_badge_html(station)
         kiosk_barcode.value = ""
-        kiosk_upload_button.disabled = True
         kiosk_check_measurement_button.disabled = True
         build_kiosk_measurement_form(station)
         update_kiosk_status(
@@ -979,14 +1115,22 @@ def build_app() -> pn.Column:
             input_widget = pn.widgets.TextInput(
                 name=detail["label"],
                 placeholder=f"Wert in {detail['unit'] or 'Einheit'}",
-                width=220,
+                width=300,
                 disabled=True,
             )
             kiosk_measurement_inputs[detail["code"]] = input_widget
             rows.append(
                 pn.Row(
                     input_widget,
-                    pn.pane.Markdown(f"`{detail['code']}` {detail['unit'] or ''}", width=180),
+                    pn.pane.HTML(
+                        (
+                            "<div style='padding-top:28px;color:#4b5563;font-size:15px'>"
+                            f"<strong>{detail['code']}</strong>"
+                            f"{' / ' + detail['unit'] if detail['unit'] else ''}"
+                            "</div>"
+                        ),
+                        width=180,
+                    ),
                     sizing_mode="stretch_width",
                     align="end",
                 )
@@ -1018,18 +1162,18 @@ def build_app() -> pn.Column:
         kiosk_current_barcode = barcode
         for input_widget in kiosk_measurement_inputs.values():
             input_widget.disabled = False
-        kiosk_upload_button.disabled = False
         kiosk_check_measurement_button.disabled = False
         update_kiosk_status(
             step=2,
             message=(
-                f"Barcode `{barcode}` erfasst. Messwert vom Gerät übernehmen oder "
-                "Messwert manuell eintragen."
+                f"Barcode `{barcode}` erfasst. Messwert wird automatisch geprüft."
             ),
         )
-        set_message(kiosk_message, "Barcode wurde übernommen.", "success")
+        set_message(kiosk_message, "Barcode erfasst. Prüfe Messwert...", "info")
+        check_kiosk_measurement()
 
     def check_kiosk_measurement(_: object | None = None) -> None:
+        nonlocal kiosk_current_barcode
         if kiosk_current_station_id is None or kiosk_current_barcode is None:
             set_message(kiosk_message, "Bitte zuerst Barcode übernehmen.", "warning")
             return
@@ -1049,12 +1193,11 @@ def build_app() -> pn.Column:
             set_message(
                 kiosk_message,
                 (
-                    "Noch kein Messwert vom Adapter empfangen. Gerät prüfen oder "
-                    "Messwert manuell eintragen."
+                    "Noch kein Messwert vom Adapter empfangen. Messvorgang am Gerät prüfen."
                 ),
                 "warning",
             )
-            update_kiosk_status(step=3, message="Warte auf Messwert vom Gerät.")
+            update_kiosk_status(step=2, message="Warte auf Messwert vom Gerät.")
             return
 
         value_text = ", ".join(
@@ -1063,39 +1206,8 @@ def build_app() -> pn.Column:
         )
         set_message(kiosk_message, f"Messung gefunden: {value_text}", "success")
         update_kiosk_status(step=4, message="Messung wurde bereits zentral gespeichert.")
-
-    def upload_kiosk_measurement(_: object | None = None) -> None:
-        if kiosk_current_station_id is None:
-            set_message(kiosk_message, "Keine Station ausgewählt.", "danger")
-            return
-        if kiosk_current_barcode is None:
-            set_message(kiosk_message, "Bitte zuerst Barcode übernehmen.", "warning")
-            return
-
-        try:
-            parsed_values = parse_kiosk_measurement_values()
-            if not parsed_values:
-                raise ValueError("Bitte mindestens einen Messwert eintragen.")
-            with session_scope(settings) as session:
-                measurement_id = save_kiosk_measurement(
-                    session,
-                    station_id=kiosk_current_station_id,
-                    rueckmeldenummer=kiosk_current_barcode,
-                    values=parsed_values,
-                )
-        except Exception as exc:  # noqa: BLE001
-            set_message(kiosk_message, f"Messung konnte nicht hochgeladen werden: {exc}", "danger")
-            update_kiosk_status(step=3, message="Fehler beim Hochladen. Bitte Eingaben prüfen.")
-            return
-
-        set_message(
-            kiosk_message,
-            f"Messung erfolgreich hochgeladen. Messung #{measurement_id}",
-            "success",
-        )
-        update_kiosk_status(step=4, message="Fertig. Nächsten Barcode scannen.")
-        kiosk_upload_button.disabled = True
-        kiosk_check_measurement_button.disabled = True
+        kiosk_barcode.value = ""
+        kiosk_current_barcode = None
 
     def parse_kiosk_measurement_values() -> dict[str, Decimal]:
         values = {}
@@ -1109,8 +1221,11 @@ def build_app() -> pn.Column:
                 raise ValueError(f"Messwert für {measurement_type} ist keine Zahl.") from exc
         return values
 
-    def reset_kiosk(_: object | None = None) -> None:
-        load_kiosk_station()
+    def process_kiosk_barcode(event: Any) -> None:
+        barcode = str(event.new or "").strip()
+        if not barcode or barcode == kiosk_current_barcode:
+            return
+        accept_kiosk_barcode()
 
     def update_kiosk_status(*, step: int, message: str) -> None:
         labels = [
@@ -1122,14 +1237,21 @@ def build_app() -> pn.Column:
         rendered_steps = []
         for number, label in labels:
             active = int(number) == step
-            background = "#0f766e" if active else "#e5e7eb"
-            color = "white" if active else "#111827"
+            done = int(number) < step
+            background = "#0f766e" if active else "#d1fae5" if done else "#e5e7eb"
+            color = "white" if active else "#065f46" if done else "#111827"
+            border = "#0f766e" if active or done else "#d1d5db"
             rendered_steps.append(
-                f"<span style='display:inline-block;min-width:120px;padding:10px 14px;"
-                f"margin-right:8px;border-radius:6px;background:{background};color:{color};"
-                f"text-align:center;font-weight:600'>{number}. {label}</span>"
+                f"<span style='display:inline-block;min-width:96px;padding:12px 10px;"
+                f"margin-right:4px;border-radius:6px;background:{background};color:{color};"
+                f"border:1px solid {border};text-align:center;font-weight:700'>"
+                f"{number}. {label}</span>"
             )
-        kiosk_status.object = "<div>" + "".join(rendered_steps) + f"</div><p>{message}</p>"
+        kiosk_status.object = (
+            "<div style='margin:10px 0 14px 0'>"
+            + "".join(rendered_steps)
+            + f"</div><p style='font-size:20px;margin:0;color:#111827'>{message}</p>"
+        )
 
     station_table.param.watch(select_station, "selection")
     adapter_table.param.watch(select_adapter, "selection")
@@ -1137,26 +1259,20 @@ def build_app() -> pn.Column:
     kiosk_station.param.watch(load_kiosk_station, "value")
     refresh_button.on_click(refresh_stations)
     new_station_button.on_click(start_new_station)
-    save_station_button.on_click(save_station)
+    create_station_button.on_click(create_station_from_form)
     cancel_station_button.on_click(cancel_new_station)
     adapter_add_button.on_click(add_adapter)
     adapter_remove_button.on_click(remove_adapter)
     lookup_button.on_click(lookup_measurements)
     load_payload_button.on_click(inspect_payload)
     kiosk_refresh_button.on_click(refresh_stations)
-    kiosk_reset_button.on_click(reset_kiosk)
     kiosk_barcode_button.on_click(accept_kiosk_barcode)
+    kiosk_barcode.param.watch(process_kiosk_barcode, "value")
     kiosk_check_measurement_button.on_click(check_kiosk_measurement)
-    kiosk_upload_button.on_click(upload_kiosk_measurement)
 
     for field_widget in (
         name,
-        hostname,
         location,
-        operating_system,
-        machine_name,
-        machine_type,
-        measurement_interface,
         scanner_host,
         scanner_port,
         scanner_protocol,
@@ -1212,6 +1328,16 @@ def build_app() -> pn.Column:
             "padding": "8px 12px",
         },
     )
+    adapter_state_panel = pn.Accordion(
+        ("Adapter state", adapter_detail),
+        active=[],
+        width=420,
+    )
+    diagnostics_panel = pn.Accordion(
+        ("Recent diagnostics", diagnostics_table),
+        active=[],
+        width=420,
+    )
     station_config_form = pn.Column(
         pn.Tabs(
             (
@@ -1219,12 +1345,7 @@ def build_app() -> pn.Column:
                 pn.Column(
                     pn.GridBox(
                         name,
-                        hostname,
                         location,
-                        operating_system,
-                        machine_name,
-                        machine_type,
-                        measurement_interface,
                         active,
                         ncols=2,
                         align="start",
@@ -1247,173 +1368,160 @@ def build_app() -> pn.Column:
                 pn.Column(measurement_types, sizing_mode="stretch_width"),
             ),
             sizing_mode="stretch_width",
+            stylesheets=[_ADMIN_TAB_STYLESHEET],
         ),
         station_message,
         align="start",
         width=860,
     )
+
+    adapter_common_section = pn.Column(
+        pn.pane.Markdown("### Common"),
+        adapter_enabled,
+        pn.GridBox(
+            adapter_type,
+            adapter_name,
+            adapter_measurement_type,
+            adapter_poll_interval,
+            adapter_encoding,
+            ncols=2,
+            align="start",
+        ),
+        sizing_mode="stretch_width",
+    )
+    smb_adapter_section = pn.Column(
+        pn.pane.Markdown("### SMB1 polling"),
+        pn.GridBox(
+            adapter_server,
+            adapter_share,
+            adapter_remote_dir,
+            adapter_username_env,
+            adapter_password_env,
+            adapter_value_column_index,
+            adapter_filename_pattern,
+            adapter_delimiter,
+            adapter_delete_after_success,
+            adapter_delete_with_smbclient,
+            adapter_processed_hashes_path,
+            ncols=2,
+            align="start",
+        ),
+        sizing_mode="stretch_width",
+    )
+    tcp_adapter_section = pn.Column(
+        pn.pane.Markdown("### TCP/IP line"),
+        pn.GridBox(
+            tcp_host,
+            tcp_port,
+            tcp_reconnect_delay,
+            ncols=2,
+            align="start",
+        ),
+        sizing_mode="stretch_width",
+    )
+    serial_adapter_section = pn.Column(
+        pn.pane.Markdown("### Serial request"),
+        pn.GridBox(
+            serial_port,
+            serial_command,
+            serial_baudrate,
+            serial_bytesize,
+            serial_parity,
+            serial_stopbits,
+            serial_timeout,
+            ncols=2,
+            align="start",
+        ),
+        sizing_mode="stretch_width",
+    )
+
+    def update_adapter_type_sections(_: object | None = None) -> None:
+        smb_adapter_section.visible = adapter_type.value == "smb1_polling"
+        tcp_adapter_section.visible = adapter_type.value == "tcp_line"
+        serial_adapter_section.visible = adapter_type.value == "serial_request"
+        if not loading_adapter_form:
+            default_names = {
+                "smb1_polling": "smb1-polling",
+                "tcp_line": "tcp-line",
+                "serial_request": "serial-request",
+            }
+            known_default_names = set(default_names.values())
+            if adapter_name.value.strip() in known_default_names or not adapter_name.value.strip():
+                adapter_name.value = default_names.get(adapter_type.value, adapter_name.value)
+        update_adapter_action_state()
+
+    update_adapter_type_sections()
+    adapter_type.param.watch(update_adapter_type_sections, "value")
+
     adapter_config_form = pn.Column(
         pn.Row(adapter_add_button, adapter_remove_button),
         adapter_table,
         pn.pane.Markdown("### Adapter settings"),
-        pn.Tabs(
-            (
-                "Common",
-                pn.GridBox(
-                    adapter_enabled,
-                    adapter_type,
-                    adapter_name,
-                    adapter_measurement_type,
-                    adapter_poll_interval,
-                    adapter_encoding,
-                    ncols=3,
-                    align="start",
-                ),
-            ),
-            (
-                "SMB1",
-                pn.GridBox(
-                    adapter_server,
-                    adapter_share,
-                    adapter_remote_dir,
-                    adapter_username_env,
-                    adapter_password_env,
-                    ncols=3,
-                    align="start",
-                ),
-            ),
-            (
-                "TCP/IP",
-                pn.GridBox(
-                    tcp_host,
-                    tcp_port,
-                    tcp_reconnect_delay,
-                    ncols=3,
-                    align="start",
-                ),
-            ),
-            (
-                "Serial",
-                pn.GridBox(
-                    serial_port,
-                    serial_command,
-                    serial_baudrate,
-                    serial_bytesize,
-                    serial_parity,
-                    serial_stopbits,
-                    serial_timeout,
-                    ncols=3,
-                    align="start",
-                ),
-            ),
-            (
-                "Parsing",
-                pn.GridBox(
-                    adapter_value_column_index,
-                    adapter_filename_pattern,
-                    adapter_delimiter,
-                    ncols=3,
-                    align="start",
-                ),
-            ),
-            (
-                "Runtime",
-                pn.GridBox(
-                    adapter_delete_after_success,
-                    adapter_delete_with_smbclient,
-                    adapter_processed_hashes_path,
-                    ncols=3,
-                    align="start",
-                ),
-            ),
-            sizing_mode="stretch_width",
-        ),
+        adapter_common_section,
+        smb_adapter_section,
+        tcp_adapter_section,
+        serial_adapter_section,
         adapter_message,
-        pn.pane.Markdown("### Effective adapter JSON"),
-        adapter_preview,
+        pn.Accordion(("Effective adapter JSON", adapter_preview), active=[]),
         sizing_mode="stretch_width",
     )
     kiosk_panel = pn.Column(
         pn.Row(
             pn.Column(
                 kiosk_title,
-                kiosk_summary,
+                kiosk_station_badge,
                 sizing_mode="stretch_width",
             ),
             pn.Spacer(sizing_mode="stretch_width"),
-            pn.Column(
-                pn.Row(kiosk_station, kiosk_refresh_button, kiosk_reset_button, align="end"),
-                width=640,
-            ),
+            kiosk_operator_logo,
             sizing_mode="stretch_width",
-            align="start",
+            align="center",
+            styles={
+                "border-bottom": "1px solid #d1d5db",
+                "padding": "0 0 18px 0",
+                "margin-bottom": "14px",
+            },
         ),
         kiosk_status,
         kiosk_message,
-        pn.Row(
-            pn.Column(
-                pn.pane.Markdown("### 1. Barcode scannen"),
-                pn.Row(kiosk_barcode, kiosk_barcode_button, align="end"),
-                pn.pane.Markdown("### 2. Messwert erfassen"),
-                kiosk_measurement_form,
-                pn.Row(kiosk_check_measurement_button, kiosk_upload_button, align="end"),
-                sizing_mode="stretch_width",
-            ),
-            pn.Column(
-                pn.pane.Markdown("### Hinweise"),
-                pn.pane.Markdown(
-                    "\n".join(
-                        [
-                            "- Barcode scannen oder Rückmeldenummer eingeben.",
-                            "- Messwerte kommen im Regelbetrieb vom Stationsadapter.",
-                            (
-                                "- Manuelle Eingabe ist als Fallback für Entwicklung "
-                                "und Störungen gedacht."
-                            ),
-                            "- Bei Fehlern Vorgang zurücksetzen und erneut scannen.",
-                        ]
-                    )
-                ),
-                width=360,
-                styles={
-                    "background": "#f8fafc",
-                    "border": "1px solid #d1d5db",
-                    "padding": "12px",
-                    "border-radius": "6px",
-                },
-            ),
-            sizing_mode="stretch_width",
-            align="start",
+        pn.pane.HTML(
+            "<div style='font-size:28px;font-weight:800;color:#111827'>"
+            "Rückmeldenummer scannen</div>"
         ),
+        kiosk_barcode,
         sizing_mode="stretch_width",
-        styles={"padding": "8px 0"},
+        css_classes=["slf-kiosk"],
+        styles={
+            "padding": "28px",
+            "background": "#ffffff",
+            "min-height": "calc(100vh - 32px)",
+        },
     )
+
+    if kiosk:
+        return pn.Column(
+            kiosk_panel,
+            sizing_mode="stretch_width",
+            styles={"background": "#ffffff", "padding": "16px"},
+        )
 
     return pn.Column(
         header,
         pn.Tabs(
-            (
-                "Kiosk",
-                kiosk_panel,
-            ),
             (
                 "Stations",
                 pn.Column(
                     pn.Row(
                         refresh_button,
                         new_station_button,
-                        save_station_button,
+                        create_station_button,
                         cancel_station_button,
                     ),
                     station_table,
                     station_status_bar,
                     pn.Row(
                         station_config_form,
-                        pn.Column(
-                            pn.pane.Markdown("### Adapter State"),
-                            adapter_detail,
-                            width=420,
-                        ),
+                        pn.Column(adapter_state_panel, diagnostics_panel),
                         sizing_mode="stretch_width",
                         align="start",
                     ),
@@ -1440,9 +1548,19 @@ def build_app() -> pn.Column:
                 ),
             ),
             sizing_mode="stretch_width",
+            stylesheets=[_ADMIN_TAB_STYLESHEET],
         ),
         sizing_mode="stretch_width",
+        styles={"background": "#f3f4f6", "padding": "16px"},
     )
+
+
+def build_admin_app() -> pn.Column:
+    return build_app(kiosk=False)
+
+
+def build_kiosk_app() -> pn.Column:
+    return build_app(kiosk=True)
 
 
 def load_station_rows(session: Session) -> list[dict[str, Any]]:
@@ -1450,6 +1568,7 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
         select(Station)
         .options(
             selectinload(Station.heartbeats),
+            selectinload(Station.events),
             selectinload(Station.measurement_type_links).selectinload(
                 StationMeasurementType.measurement_type
             ),
@@ -1464,8 +1583,20 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
             key=lambda heartbeat: heartbeat.received_at,
             default=None,
         )
+        latest_event = max(
+            station.events,
+            key=lambda event: event.occurred_at,
+            default=None,
+        )
         status = latest_heartbeat.status if latest_heartbeat else None
         received_at = latest_heartbeat.received_at if latest_heartbeat else None
+        online = is_station_online(status, received_at)
+        health_state, health_message = station_health(
+            online=online,
+            status_value=status,
+            adapter_status=latest_heartbeat.adapter_status if latest_heartbeat else None,
+            latest_event=latest_event,
+        )
         active_measurement_links = [
             link for link in station.measurement_type_links if link.active
         ]
@@ -1473,12 +1604,7 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
             {
                 "id": station.id,
                 "name": station.name,
-                "hostname": station.hostname,
                 "location": station.location,
-                "operating_system": station.operating_system,
-                "machine_name": station.machine_name,
-                "machine_type": station.machine_type,
-                "measurement_interface": station.measurement_interface,
                 "scanner_host": station.scanner_host,
                 "scanner_port": station.scanner_port,
                 "scanner_protocol": station.scanner_protocol,
@@ -1488,8 +1614,30 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                 "network_notes": station.network_notes,
                 "active": station.active,
                 "status": status,
-                "online": is_station_online(status, received_at),
+                "health_state": health_state,
+                "health_message": health_message,
+                "online": online,
                 "last_heartbeat_at": format_datetime(received_at),
+                "last_event_at": format_datetime(
+                    latest_event.occurred_at if latest_event else None
+                ),
+                "last_event_type": latest_event.event_type if latest_event else None,
+                "last_event_severity": latest_event.severity if latest_event else None,
+                "last_event_message": latest_event.message if latest_event else None,
+                "recent_events": [
+                    {
+                        "occurred_at": format_datetime(event.occurred_at),
+                        "severity": event.severity,
+                        "event_type": event.event_type,
+                        "message": event.message,
+                    }
+                    for event in sorted(
+                        station.events,
+                        key=lambda item: item.occurred_at,
+                        reverse=True,
+                    )[:20]
+                ],
+                "hostname": latest_heartbeat.hostname if latest_heartbeat else None,
                 "companion_version": latest_heartbeat.companion_version
                 if latest_heartbeat
                 else None,
@@ -1529,20 +1677,13 @@ def load_measurement_type_options(session: Session) -> list[str]:
 
 
 def kiosk_workflow_title(station: dict[str, Any]) -> str:
-    name_parts = " ".join(
-        str(value or "")
-        for value in (
-            station.get("name"),
-            station.get("machine_name"),
-            station.get("machine_type"),
-        )
-    ).lower()
+    name_parts = str(station.get("name") or "").lower()
     measurement_codes = set(station.get("measurement_type_codes") or [])
     if "fertig" in name_parts or "ueberstand" in measurement_codes:
         return "Fertig messen"
     if "breite" in name_parts or measurement_codes == {"breite"}:
         return "Breite messen"
-    return station.get("machine_name") or station.get("name") or "Messen"
+    return station.get("name") or "Messen"
 
 
 def kiosk_station_summary(station: dict[str, Any]) -> str:
@@ -1555,6 +1696,22 @@ def kiosk_station_summary(station: dict[str, Any]) -> str:
             f"Standort: `{station['location'] or '-'}`",
             f"Messarten: `{measurement_labels or '-'}`",
         ]
+    )
+
+
+def kiosk_station_badge_html(station: dict[str, Any]) -> str:
+    status_text = "Online" if station.get("online") else "Offline"
+    status_background = "#d1fae5" if station.get("online") else "#fee2e2"
+    status_color = "#065f46" if station.get("online") else "#991b1b"
+    station_name = escape(str(station.get("name") or "-"))
+    return (
+        "<div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center'>"
+        f"<span style='background:{status_background};color:{status_color};"
+        "border-radius:6px;padding:7px 10px;font-weight:700'>"
+        f"{status_text}</span>"
+        "<span style='background:#f3f4f6;color:#111827;border-radius:6px;"
+        f"padding:7px 10px'>Station: <strong>{station_name}</strong></span>"
+        "</div>"
     )
 
 
@@ -1810,7 +1967,11 @@ def run() -> None:
         )
 
     app_resource = resources.files("slf_trace.ui").joinpath("app.py")
-    with resources.as_file(app_resource) as app_path:
+    kiosk_resource = resources.files("slf_trace.ui").joinpath("kiosk.py")
+    with (
+        resources.as_file(app_resource) as app_path,
+        resources.as_file(kiosk_resource) as kiosk_path,
+    ):
         command = [
             panel_executable,
             "serve",
@@ -1818,13 +1979,12 @@ def run() -> None:
             settings.ui_host,
             "--port",
             str(settings.ui_port),
-            "--show",
             "--allow-websocket-origin",
             ui_websocket_origin(settings),
-            str(app_path),
         ]
         if settings.ui_autoreload:
-            command.insert(-1, "--dev")
+            command.append("--dev")
+        command.extend([str(app_path), str(kiosk_path)])
 
         subprocess.run(command, check=True)
 

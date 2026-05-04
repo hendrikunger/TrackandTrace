@@ -125,3 +125,6 @@ initial station companion API contract and `docs/station-inventory.md` for stati
 station-side runtime. See `docs/parser-layer.md` for raw payload parsing and
 `docs/measurement-adapters.md` for TCP, serial, and simulator adapter development. UI branding
 assets live in `src/slf_trace/ui/assets/`.
+
+Offline production deployment uses packed Python environments. See `docs/deployment.md` and
+`deploy/README.md` for the release bundle layout, build steps, and Windows/Ubuntu install scripts.

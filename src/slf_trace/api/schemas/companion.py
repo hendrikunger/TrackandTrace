@@ -18,10 +18,7 @@ class MeasurementTypeConfig(BaseModel):
 class StationConfigResponse(BaseModel):
     station_id: int
     name: str
-    hostname: str | None = None
     location: str | None = None
-    machine_name: str | None = None
-    machine_type: str | None = None
     scanner_host: str | None = None
     scanner_port: int | None = None
     scanner_protocol: str | None = None
@@ -33,6 +30,7 @@ class StationConfigResponse(BaseModel):
 class StationHeartbeatRequest(BaseModel):
     station_id: int
     status: Literal["online", "degraded", "offline", "starting"] = "online"
+    hostname: str | None = Field(default=None, max_length=255)
     companion_version: str | None = Field(default=None, max_length=80)
     adapter_status: dict[str, Any] | None = None
 
@@ -40,6 +38,20 @@ class StationHeartbeatRequest(BaseModel):
 class StationHeartbeatResponse(ApiAck):
     station_id: int
     heartbeat_id: int
+
+
+class StationEventRequest(BaseModel):
+    station_id: int
+    event_type: str = Field(min_length=1, max_length=120)
+    severity: Literal["info", "warning", "error", "critical"] = "info"
+    message: str = Field(min_length=1)
+    context: dict[str, Any] | None = None
+    occurred_at: datetime | None = None
+
+
+class StationEventResponse(ApiAck):
+    station_id: int
+    event_id: int
 
 
 class BarcodeScanRequest(BaseModel):

@@ -29,6 +29,14 @@ The runtime:
 - stores retryable outgoing events in a local SQLite outbox
 - retries outbox events until the central API accepts them
 - logs startup, heartbeat, outbox success, and outbox failure events
+- writes rotating companion logs to `COMPANION_LOG_PATH` when configured
+- can submit diagnostics events to `/api/companion/events`
+
+Log rotation is controlled by:
+
+- `COMPANION_LOG_PATH` (default `logs/slf-trace-companion.log`)
+- `COMPANION_LOG_MAX_BYTES` (default `5000000`)
+- `COMPANION_LOG_BACKUP_COUNT` (default `5`)
 
 ## Outbox
 

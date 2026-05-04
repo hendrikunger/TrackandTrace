@@ -8,8 +8,9 @@ from slf_trace.companion.runtime import (
 
 
 async def async_main() -> None:
+    config = config_from_settings()
     configure_logging()
-    runtime = CompanionRuntime(config_from_settings())
+    runtime = CompanionRuntime(config)
     await runtime.run_forever()
 
 
