@@ -98,6 +98,11 @@ URL; use `0.0.0.0` only when you intentionally want to bind the UI on all interf
 passes the matching `--allow-websocket-origin`, because Bokeh rejects websocket connections when the
 browser origin does not exactly match the allowed host and port.
 
+The admin UI is available at `/app`. The production operator UI is available separately at
+`/kiosk`, and can be pinned to a station with `/kiosk?station_id=1`. The URL station id overrides
+`STATION_ID` for local development. See `docs/kiosk-startup.md` for Windows and Ubuntu kiosk browser
+startup commands.
+
 In the station admin view, station detail fields and measurement type assignments autosave when a
 value changes. Select a station in the read-only station table, edit the controls below it, and
 watch the status message for the autosave result. Tables are read-only and scroll in place instead
@@ -166,6 +171,8 @@ ruff check .
 pytest
 alembic check
 ```
+
+The no-hardware test strategy and simulator commands live in `docs/test-strategy.md`.
 
 ## Smoke Test Calls
 

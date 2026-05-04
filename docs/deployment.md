@@ -9,6 +9,7 @@ internet access.
 Build one artifact per target OS and CPU architecture:
 
 - Windows x64 server runtime for API, admin UI, migrations, and PostgreSQL access.
+- Linux x64 API runtime for API-only hosts that use an external PostgreSQL server.
 - Windows 11 x64 panel runtime for kiosk/admin Panel UI and station companion.
 - Ubuntu 24.04 x64 panel runtime for kiosk/admin Panel UI and station companion.
 
@@ -28,6 +29,7 @@ slf-trace-release-<version>-<target>/
   migrations/
   deploy/
     install-server.ps1
+    install-server.sh
     install-panel.ps1
     install-panel.sh
     scripts/
@@ -136,7 +138,7 @@ Panel:
 
 ```text
 http://127.0.0.1:5006/app
-http://127.0.0.1:5006/kiosk
+http://127.0.0.1:5006/kiosk?station_id=1
 ```
 
 Companion:

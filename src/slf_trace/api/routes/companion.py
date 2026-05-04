@@ -46,6 +46,9 @@ async def get_station_config(station_id: int, session: SessionDep) -> StationCon
         scanner_host=station.scanner_host,
         scanner_port=station.scanner_port,
         scanner_protocol=station.scanner_protocol,
+        workflow_type=station.workflow_type,
+        workflow_title=station.workflow_title,
+        workflow_config=station.workflow_config or {},
         active=station.active,
         adapters=station.adapter_config or [],
         measurement_types=[

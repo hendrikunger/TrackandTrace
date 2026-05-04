@@ -10,6 +10,8 @@ Returns the station bootstrap/config view used by the companion app.
 The response includes `measurement_types`, which is the list of active measurement types this
 station is allowed to submit.
 The response also includes `adapters`, which is the per-station companion adapter configuration.
+Workflow fields are returned separately as `workflow_type`, `workflow_title`, and `workflow_config`.
+This keeps UI/process behavior out of device adapter configuration.
 For SMB1 stations this is where fields such as `remote_dir`, `share`, `measurement_type`, and
 `value_column_index` are configured.
 Scanner fields are also returned here: `scanner_host` is the expected scanner IP address,

@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Numeric,
     String,
     Text,
@@ -39,6 +40,13 @@ class Station(TimestampMixin, Base):
     scanner_host: Mapped[str | None] = mapped_column(String(255))
     scanner_port: Mapped[int | None]
     scanner_protocol: Mapped[str | None] = mapped_column(String(80))
+    workflow_type: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        server_default="measurement_capture",
+    )
+    workflow_title: Mapped[str | None] = mapped_column(String(120))
+    workflow_config: Mapped[dict[str, object] | None] = mapped_column(JSON)
     adapter_config: Mapped[list[dict[str, object]] | None] = mapped_column(JSON)
     payload_format: Mapped[str | None] = mapped_column(Text)
     timing_notes: Mapped[str | None] = mapped_column(Text)
@@ -102,6 +110,10 @@ class StationHeartbeat(Base):
 
 class StationEvent(Base):
     __tablename__ = "station_events"
+    __table_args__ = (
+        Index("ix_station_events_station_occurred", "station_id", "occurred_at"),
+        Index("ix_station_events_severity", "severity"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     station_id: Mapped[int] = mapped_column(

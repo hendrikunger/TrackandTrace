@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from slf_trace.api.schemas.companion import MeasurementRequest
+from slf_trace.api.services import companion as companion_services
 from slf_trace.companion.adapters.base import (
     BarcodeScanEvent,
     MeasurementEvent,
@@ -226,3 +229,66 @@ def test_runtime_queues_station_diagnostic_events(tmp_path) -> None:
     assert queued[0].payload["station_id"] == 1
     assert queued[0].payload["event_type"] == "adapter.connection_failed"
     assert queued[0].payload["context"] == {"adapter": "keyence-srx-scanner"}
+
+
+@pytest.mark.asyncio
+async def test_record_measurement_returns_existing_duplicate(monkeypatch) -> None:
+    calls = {"resolve_part": 0, "add": 0, "flush": 0}
+    existing = SimpleNamespace(
+        id=7,
+        station_id=1,
+        part_id=11,
+        idempotency_key="same-event",
+        values=[],
+    )
+
+    async def get_station_or_404(session, station_id):
+        return SimpleNamespace(id=station_id)
+
+    async def validate_measurement_types(session, payload):
+        return None
+
+    async def find_measurement_by_idempotency(session, *, station_id, idempotency_key):
+        assert station_id == 1
+        assert idempotency_key == "same-event"
+        return existing
+
+    async def resolve_measurement_part(session, payload):
+        calls["resolve_part"] += 1
+        return SimpleNamespace(id=11)
+
+    class FakeSession:
+        def add(self, item):
+            calls["add"] += 1
+
+        async def flush(self):
+            calls["flush"] += 1
+
+    monkeypatch.setattr(companion_services, "get_station_or_404", get_station_or_404)
+    monkeypatch.setattr(
+        companion_services,
+        "validate_measurement_types",
+        validate_measurement_types,
+    )
+    monkeypatch.setattr(
+        companion_services,
+        "find_measurement_by_idempotency",
+        find_measurement_by_idempotency,
+    )
+    monkeypatch.setattr(companion_services, "resolve_measurement_part", resolve_measurement_part)
+
+    measurement, duplicate = await companion_services.record_measurement(
+        FakeSession(),
+        MeasurementRequest(
+            station_id=1,
+            idempotency_key="same-event",
+            source_type="api_simulator",
+            measured_at=datetime.now(UTC),
+            rueckmeldenummer="RM-1",
+            values=[{"measurement_type": "breite", "value": "12.4"}],
+        ),
+    )
+
+    assert measurement is existing
+    assert duplicate is True
+    assert calls == {"resolve_part": 0, "add": 0, "flush": 0}

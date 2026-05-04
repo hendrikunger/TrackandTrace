@@ -34,7 +34,9 @@ The system captures barcode scans and measurement results for individual physica
 ## Development Status
 
 This repository is in early scaffold development. See `docs/architecture.md` for the implementation
-plan.
+plan. For station workflows, see `docs/workflows.md`. For station kiosk startup, see
+`docs/kiosk-startup.md`. For the no-hardware development and CI strategy, including station
+simulators, see `docs/test-strategy.md`.
 
 ## Start and Test Locally
 

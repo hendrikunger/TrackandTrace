@@ -1,5 +1,6 @@
+from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
-from slf_trace.ui.main import kiosk_workflow_title
+from slf_trace.ui.main import kiosk_workflow_title, resolve_kiosk_station_id
 
 
 def test_logo_svg_asset_is_available() -> None:
@@ -20,6 +21,20 @@ def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
         )
         == "Breite messen"
     )
+
+
+def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
+    assert (
+        kiosk_workflow_title(
+            {
+                "name": "LASER-01",
+                "workflow_type": "laser_marking",
+                "workflow_title": "Laser markieren",
+                "measurement_type_codes": [],
+            }
+        )
+        == "Laser markieren"
+    )
     assert (
         kiosk_workflow_title(
             {
@@ -29,3 +44,24 @@ def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
         )
         == "Fertig messen"
     )
+
+
+def test_kiosk_station_id_uses_url_before_environment() -> None:
+    station_id, source = resolve_kiosk_station_id(
+        Settings(station_id="3"),
+        {"station_id": [b"7"]},
+    )
+
+    assert station_id == 7
+    assert source == "URL"
+
+
+def test_kiosk_station_id_falls_back_to_environment() -> None:
+    station_id, source = resolve_kiosk_station_id(Settings(station_id="3"), {})
+
+    assert station_id == 3
+    assert source == "STATION_ID"
+
+
+def test_kiosk_station_id_allows_local_unconfigured_mode() -> None:
+    assert resolve_kiosk_station_id(Settings(station_id=None), {}) == (None, None)

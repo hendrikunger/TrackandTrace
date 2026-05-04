@@ -46,3 +46,18 @@ async def test_station_inventory_routes_are_registered() -> None:
     paths = response.json()["paths"]
     assert "/api/stations" in paths
     assert "/api/stations/{station_id}" in paths
+
+
+def test_station_inventory_schema_allows_non_measurement_workflow() -> None:
+    from slf_trace.api.schemas.stations import StationCreate
+
+    station = StationCreate(
+        name="LASER-01",
+        workflow_type="laser_marking",
+        workflow_title="Laser markieren",
+        workflow_config={"requires_operator_ack": True},
+        measurement_type_codes=[],
+    )
+
+    assert station.workflow_type == "laser_marking"
+    assert station.measurement_type_codes == []

@@ -46,7 +46,7 @@ conda-pack -n "$ENV_NAME" -o "$OUT_DIR/env.tar.gz" --force
 cp alembic.ini "$OUT_DIR/"
 cp -R migrations "$OUT_DIR/"
 mkdir -p "$OUT_DIR/deploy" "$OUT_DIR/docs"
-cp -R deploy/install-panel.sh deploy/templates deploy/systemd "$OUT_DIR/deploy/"
+cp -R deploy/install-panel.sh deploy/install-server.sh deploy/templates deploy/systemd "$OUT_DIR/deploy/"
 cp docs/deployment.md "$OUT_DIR/docs/"
 printf '%s\n' "$VERSION" > "$OUT_DIR/VERSION"
 

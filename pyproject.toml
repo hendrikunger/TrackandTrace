@@ -36,6 +36,7 @@ serial = [
 [project.scripts]
 slf-trace-api = "slf_trace.api.main:run"
 slf-trace-companion = "slf_trace.companion.main:run"
+slf-trace-sim = "slf_trace.simulators:run"
 slf-trace-ui = "slf_trace.ui.main:run"
 
 [tool.hatch.build.targets.wheel]

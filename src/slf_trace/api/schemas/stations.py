@@ -11,6 +11,9 @@ class StationBase(BaseModel):
     scanner_host: str | None = Field(default=None, max_length=255)
     scanner_port: int | None = Field(default=None, ge=1, le=65535)
     scanner_protocol: str | None = Field(default=None, max_length=80)
+    workflow_type: str = Field(default="measurement_capture", max_length=80)
+    workflow_title: str | None = Field(default=None, max_length=120)
+    workflow_config: dict[str, Any] = Field(default_factory=dict)
     adapter_config: list[dict[str, Any]] = Field(default_factory=list)
     payload_format: str | None = None
     timing_notes: str | None = None
@@ -28,6 +31,9 @@ class StationUpdate(BaseModel):
     scanner_host: str | None = Field(default=None, max_length=255)
     scanner_port: int | None = Field(default=None, ge=1, le=65535)
     scanner_protocol: str | None = Field(default=None, max_length=80)
+    workflow_type: str | None = Field(default=None, max_length=80)
+    workflow_title: str | None = Field(default=None, max_length=120)
+    workflow_config: dict[str, Any] | None = None
     adapter_config: list[dict[str, Any]] | None = None
     payload_format: str | None = None
     timing_notes: str | None = None
@@ -43,6 +49,9 @@ class StationResponse(BaseModel):
     scanner_host: str | None = None
     scanner_port: int | None = None
     scanner_protocol: str | None = None
+    workflow_type: str
+    workflow_title: str | None = None
+    workflow_config: dict[str, Any] = Field(default_factory=dict)
     adapter_config: list[dict[str, Any]] = Field(default_factory=list)
     payload_format: str | None = None
     timing_notes: str | None = None

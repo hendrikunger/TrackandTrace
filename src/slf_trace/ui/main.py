@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -8,6 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from html import escape
 from importlib import resources
+from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
@@ -63,6 +65,11 @@ _ADMIN_TAB_STYLESHEET = """
     box-shadow: inset 0 4px 0 #0f766e;
 }
 """
+WORKFLOW_OPTIONS = {
+    "Measurement capture": "measurement_capture",
+    "Label printing": "label_printing",
+    "Laser marking": "laser_marking",
+}
 
 
 @contextmanager
@@ -86,6 +93,10 @@ def session_scope(settings: Settings) -> Iterator[Session]:
 def build_app(*, kiosk: bool = False) -> pn.Column:
     global _KIOSK_CSS_REGISTERED
     settings = get_settings()
+    kiosk_station_id, kiosk_station_source = resolve_kiosk_station_id(
+        settings,
+        pn.state.session_args,
+    )
     if not _KIOSK_CSS_REGISTERED:
         pn.config.raw_css.append(
             """
@@ -149,6 +160,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "name": None,
             "location": None,
             "last_heartbeat": None,
+            "workflow": None,
             "measurement_types": None,
             "active": None,
         },
@@ -188,6 +200,23 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         name="Scanner protocol",
         options=["", "Keyence SR-X TCP", "none", "other"],
         width=180,
+    )
+    workflow_type = pn.widgets.Select(
+        name="Workflow type",
+        options=WORKFLOW_OPTIONS,
+        value="measurement_capture",
+        width=260,
+    )
+    workflow_title = pn.widgets.TextInput(
+        name="Display title",
+        placeholder="Optional kiosk title",
+        width=260,
+    )
+    workflow_config = pn.widgets.TextAreaInput(
+        name="Workflow config JSON",
+        value="{}",
+        height=120,
+        sizing_mode="stretch_width",
     )
     active = pn.widgets.Checkbox(name="Active", value=True)
     measurement_types = pn.widgets.MultiChoice(
@@ -486,6 +515,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     "name": row["name"],
                     "location": row["location"],
                     "last_heartbeat": row["last_heartbeat_at"],
+                    "workflow": row["workflow_type"],
                     "measurement_types": ", ".join(row["measurement_type_codes"]),
                     "active": row["active"],
                 }
@@ -513,6 +543,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             scanner_host.value = station["scanner_host"] or ""
             scanner_port.value = station["scanner_port"] or 0
             set_select_value(scanner_protocol, station["scanner_protocol"] or "")
+            set_select_value(workflow_type, station["workflow_type"] or "measurement_capture")
+            workflow_title.value = station["workflow_title"] or ""
+            workflow_config.value = json.dumps(
+                station.get("workflow_config") or {},
+                indent=2,
+                sort_keys=True,
+            )
             active.value = station["active"]
             measurement_types.value = station["measurement_type_codes"]
             load_adapter_configs(station.get("adapter_config") or [])
@@ -543,6 +580,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             scanner_host.value = ""
             scanner_port.value = 0
             scanner_protocol.value = ""
+            workflow_type.value = "measurement_capture"
+            workflow_title.value = ""
+            workflow_config.value = "{}"
             active.value = True
             measurement_types.value = []
             load_adapter_configs([])
@@ -612,6 +652,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "scanner_host": scanner_host.value.strip() or None,
             "scanner_port": scanner_port.value or None,
             "scanner_protocol": scanner_protocol.value.strip() or None,
+            "workflow_type": workflow_type.value,
+            "workflow_title": workflow_title.value.strip() or None,
+            "workflow_config": parse_workflow_config(workflow_config.value),
             "active": active.value,
         }
 
@@ -961,6 +1004,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         row_index = matching_rows[0]
         table_data.loc[row_index, "name"] = station["name"]
         table_data.loc[row_index, "location"] = station["location"]
+        table_data.loc[row_index, "workflow"] = station["workflow_type"]
         table_data.loc[row_index, "active"] = station["active"]
         station_table.value = table_data
 
@@ -1068,7 +1112,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         measurement_stations = [
             row
             for row in station_rows
-            if row["active"] and row["measurement_type_details"]
+            if row["active"]
+            and (
+                row["workflow_type"] != "measurement_capture"
+                or row["measurement_type_details"]
+            )
         ]
         kiosk_station.options = {row["name"]: row["id"] for row in measurement_stations}
         if not kiosk_station.options:
@@ -1078,15 +1126,25 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             kiosk_status.object = "Aktive Messstation mit Messart zuweisen."
             return
 
-        configured_station_id = (
-            int(settings.station_id)
-            if str(settings.station_id or "").isdigit()
-            else None
-        )
-        if configured_station_id in kiosk_station.options.values():
-            kiosk_station.value = configured_station_id
-        else:
+        if kiosk_station_id is None:
             kiosk_station.value = next(iter(kiosk_station.options.values()))
+        elif kiosk_station_id in kiosk_station.options.values():
+            kiosk_station.value = kiosk_station_id
+        else:
+            kiosk_station.value = None
+            kiosk_title.object = "## Station nicht gefunden"
+            kiosk_station_badge.object = ""
+            kiosk_status.object = (
+                f"Station {kiosk_station_id} aus {kiosk_station_source} ist nicht aktiv "
+                "oder hat keine Messart zugewiesen."
+            )
+            kiosk_message.object = (
+                "Admin-Konfiguration prüfen oder lokal mit "
+                "`/kiosk?station_id=<id>` eine andere Station öffnen."
+            )
+            kiosk_message.alert_type = "danger"
+            kiosk_message.visible = True
+            return
         load_kiosk_station()
 
     def load_kiosk_station(_: object | None = None) -> None:
@@ -1101,15 +1159,27 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode.value = ""
         kiosk_check_measurement_button.disabled = True
         build_kiosk_measurement_form(station)
-        update_kiosk_status(
-            step=1,
-            message="Bitte Barcode scannen oder Rückmeldenummer eingeben.",
-        )
+        if station["workflow_type"] == "measurement_capture":
+            kiosk_barcode.visible = True
+            update_kiosk_status(
+                step=1,
+                message="Bitte Barcode scannen oder Rückmeldenummer eingeben.",
+            )
+        else:
+            kiosk_barcode.visible = False
+            update_kiosk_status(
+                step=1,
+                message=f"Workflow `{station['workflow_type']}` ist konfiguriert.",
+            )
         kiosk_summary.object = kiosk_station_summary(station)
         kiosk_message.visible = False
 
     def build_kiosk_measurement_form(station: dict[str, Any]) -> None:
         kiosk_measurement_inputs.clear()
+        if station.get("workflow_type") != "measurement_capture":
+            kiosk_measurement_form.objects = []
+            return
+
         rows = []
         for detail in station["measurement_type_details"]:
             input_widget = pn.widgets.TextInput(
@@ -1276,6 +1346,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         scanner_host,
         scanner_port,
         scanner_protocol,
+        workflow_type,
+        workflow_title,
+        workflow_config,
         active,
     ):
         field_widget.param.watch(autosave_config, "value")
@@ -1361,6 +1434,19 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     scanner_protocol,
                     ncols=3,
                     align="start",
+                ),
+            ),
+            (
+                "Workflow",
+                pn.Column(
+                    pn.GridBox(
+                        workflow_type,
+                        workflow_title,
+                        ncols=2,
+                        align="start",
+                    ),
+                    workflow_config,
+                    sizing_mode="stretch_width",
                 ),
             ),
             (
@@ -1608,6 +1694,9 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                 "scanner_host": station.scanner_host,
                 "scanner_port": station.scanner_port,
                 "scanner_protocol": station.scanner_protocol,
+                "workflow_type": station.workflow_type,
+                "workflow_title": station.workflow_title,
+                "workflow_config": station.workflow_config or {},
                 "adapter_config": station.adapter_config or [],
                 "payload_format": station.payload_format,
                 "timing_notes": station.timing_notes,
@@ -1677,6 +1766,17 @@ def load_measurement_type_options(session: Session) -> list[str]:
 
 
 def kiosk_workflow_title(station: dict[str, Any]) -> str:
+    if station.get("workflow_title"):
+        return str(station["workflow_title"])
+
+    workflow_type = station.get("workflow_type") or "measurement_capture"
+    if workflow_type == "label_printing":
+        return "Etikett drucken"
+    if workflow_type == "laser_marking":
+        return "Laser markieren"
+    if workflow_type != "measurement_capture":
+        return station.get("name") or str(workflow_type)
+
     name_parts = str(station.get("name") or "").lower()
     measurement_codes = set(station.get("measurement_type_codes") or [])
     if "fertig" in name_parts or "ueberstand" in measurement_codes:
@@ -1690,13 +1790,16 @@ def kiosk_station_summary(station: dict[str, Any]) -> str:
     measurement_labels = ", ".join(
         detail["label"] for detail in station.get("measurement_type_details", [])
     )
-    return "\n".join(
-        [
-            f"Station: `{station['name']}`",
-            f"Standort: `{station['location'] or '-'}`",
-            f"Messarten: `{measurement_labels or '-'}`",
-        ]
-    )
+    lines = [
+        f"Station: `{station['name']}`",
+        f"Standort: `{station['location'] or '-'}`",
+        f"Workflow: `{station.get('workflow_type') or 'measurement_capture'}`",
+    ]
+    if station.get("workflow_type") == "measurement_capture":
+        lines.append(f"Messarten: `{measurement_labels or '-'}`")
+    else:
+        lines.append("Messarten: `nicht erforderlich`")
+    return "\n".join(lines)
 
 
 def kiosk_station_badge_html(station: dict[str, Any]) -> str:
@@ -1955,6 +2058,61 @@ def parse_optional_port(value: str) -> int | None:
     if port < 1 or port > 65535:
         raise ValueError("Scanner port must be between 1 and 65535.")
     return port
+
+
+def parse_workflow_config(value: str) -> dict[str, Any]:
+    if not value.strip():
+        return {}
+
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("Workflow config must be a JSON object.")
+    return parsed
+
+
+def resolve_kiosk_station_id(
+    settings: Settings,
+    session_args: dict[str, list[bytes | str]] | MappingProxyType[str, list[bytes | str]]
+    | None = None,
+) -> tuple[int | None, str | None]:
+    query_value = first_query_arg(
+        session_args or {},
+        "station_id",
+        "station",
+        "kiosk_station_id",
+    )
+    if query_value is not None:
+        return parse_station_id(query_value, "URL parameter"), "URL"
+
+    if settings.station_id is not None and str(settings.station_id).strip():
+        return parse_station_id(str(settings.station_id), "STATION_ID"), "STATION_ID"
+
+    return None, None
+
+
+def first_query_arg(
+    session_args: dict[str, list[bytes | str]] | MappingProxyType[str, list[bytes | str]],
+    *names: str,
+) -> str | None:
+    for name in names:
+        values = session_args.get(name)
+        if not values:
+            continue
+        value = values[0]
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return str(value)
+    return None
+
+
+def parse_station_id(value: str, source: str) -> int:
+    clean_value = value.strip()
+    if not clean_value.isdigit():
+        raise ValueError(f"{source} must be a positive integer station id.")
+    station_id = int(clean_value)
+    if station_id < 1:
+        raise ValueError(f"{source} must be a positive integer station id.")
+    return station_id
 
 
 def run() -> None:

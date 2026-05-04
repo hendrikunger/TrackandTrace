@@ -10,6 +10,7 @@ Build on online build machines:
 Install on offline production machines:
 
 - Windows API/database server: `deploy/install-server.ps1`
+- Linux API server: `deploy/install-server.sh`
 - Windows 11 panel station: `deploy/install-panel.ps1`
 - Ubuntu 24.04 panel station: `deploy/install-panel.sh`
 

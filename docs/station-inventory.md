@@ -9,6 +9,9 @@ Stations are configured centrally and fetched by the companion app during bootst
 - `scanner_host`, expected scanner IP address for the TCP listener
 - `scanner_port`, local port the companion listens on for scanner connections
 - `scanner_protocol`, for example `Keyence SR-X TCP`
+- `workflow_type`, the UI/process workflow identifier
+- `workflow_title`, optional station-specific kiosk display title
+- `workflow_config`, optional UI/process behavior settings
 - `adapter_config`, the per-station companion adapter definitions
 - `payload_format`
 - `timing_notes`
@@ -40,6 +43,11 @@ POST /api/stations
   "scanner_host": "10.0.0.21",
   "scanner_port": 9004,
   "scanner_protocol": "Keyence SR-X TCP",
+  "workflow_type": "measurement_capture",
+  "workflow_title": "Breite messen",
+  "workflow_config": {
+    "operator_steps": ["scan", "wait_for_measurement", "complete"]
+  },
   "adapter_config": [
     {
       "type": "smb1_polling",
@@ -66,3 +74,7 @@ PATCH /api/stations/{station_id}
 ```
 
 Assigning `measurement_type_codes` replaces the station's active measurement type allowlist.
+
+For non-measurement workflows such as `label_printing` or `laser_marking`, leave
+`measurement_type_codes` empty and store UI/process behavior in `workflow_config`. Do not add fake
+measurement types just to make the station appear in the kiosk.

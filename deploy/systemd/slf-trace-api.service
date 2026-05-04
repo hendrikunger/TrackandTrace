@@ -1,0 +1,17 @@
+[Unit]
+Description=SLF Track and Trace API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=slf-trace
+Group=slf-trace
+WorkingDirectory=/opt/slf-trace/current
+EnvironmentFile=/etc/slf-trace/server.env
+ExecStart=/opt/slf-trace/current/env/bin/slf-trace-api
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -22,6 +22,9 @@ class StationConfigResponse(BaseModel):
     scanner_host: str | None = None
     scanner_port: int | None = None
     scanner_protocol: str | None = None
+    workflow_type: str = "measurement_capture"
+    workflow_title: str | None = None
+    workflow_config: dict[str, Any] = Field(default_factory=dict)
     active: bool
     adapters: list[dict[str, Any]] = Field(default_factory=list)
     measurement_types: list[MeasurementTypeConfig] = Field(default_factory=list)

@@ -51,5 +51,5 @@ def run() -> None:
         "slf_trace.api.main:app",
         host=settings.app_host,
         port=settings.app_port,
-        reload=True,
+        reload=settings.app_env == "development",
     )
