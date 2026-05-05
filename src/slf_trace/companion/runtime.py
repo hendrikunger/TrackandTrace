@@ -2,7 +2,7 @@ import asyncio
 import logging
 import platform
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -52,6 +52,8 @@ class CompanionRuntime:
         self.outbox = outbox or Outbox(config.state_path)
         self.adapters = adapters or []
         self.station_config: dict[str, Any] | None = None
+        self.latest_rueckmeldenummer: str | None = None
+        self.last_measurement_request_id = 0
 
     async def fetch_station_config(self) -> dict[str, Any]:
         self.station_config = await self.client.fetch_station_config(self.config.station_id)
@@ -124,6 +126,15 @@ class CompanionRuntime:
         )
 
     async def handle_adapter_event(self, event: MeasurementEvent) -> None:
+        if event.rueckmeldenummer is None:
+            if self.latest_rueckmeldenummer is None:
+                logger.info(
+                    "Ignored measurement without barcode",
+                    extra={"station_id": event.station_id, "source_type": event.source_type},
+                )
+                return
+            event = replace(event, rueckmeldenummer=self.latest_rueckmeldenummer)
+            self.latest_rueckmeldenummer = None
         self.enqueue_measurement_event(event)
 
     async def handle_raw_payload_event(self, event: RawPayloadEvent) -> None:
@@ -169,6 +180,7 @@ class CompanionRuntime:
         tasks = [
             asyncio.create_task(self.run_heartbeat_loop()),
             asyncio.create_task(self.run_outbox_loop()),
+            asyncio.create_task(self.run_measurement_request_loop()),
             asyncio.create_task(self.run_adapters()),
         ]
         try:
@@ -196,6 +208,7 @@ class CompanionRuntime:
             parser_config=parser_config,
             emit_raw_payload=self.handle_raw_payload_event,
             emit_barcode_scan=self.handle_barcode_scan_event,
+            measurement_needed=lambda: self.latest_rueckmeldenummer is not None,
         )
         await asyncio.gather(*(adapter.start(context) for adapter in self.adapters))
 
@@ -208,6 +221,35 @@ class CompanionRuntime:
         while True:
             await self.flush_outbox_once()
             await asyncio.sleep(self.config.outbox_retry_interval_seconds)
+
+    async def run_measurement_request_loop(self) -> None:
+        while True:
+            await self.fetch_measurement_request_once()
+            await asyncio.sleep(0.5)
+
+    async def fetch_measurement_request_once(self) -> bool:
+        request = await self.client.fetch_measurement_request(
+            self.config.station_id,
+            self.last_measurement_request_id,
+        )
+        request_id = request.get("request_id")
+        if request_id is None:
+            return False
+
+        self.last_measurement_request_id = int(request_id)
+        rueckmeldenummer = str(request.get("rueckmeldenummer") or "").strip()
+        if not rueckmeldenummer:
+            return False
+
+        self.latest_rueckmeldenummer = rueckmeldenummer
+        logger.info(
+            "Accepted measurement request",
+            extra={
+                "station_id": self.config.station_id,
+                "request_id": self.last_measurement_request_id,
+            },
+        )
+        return True
 
     def _parser_config_from_station_config(self) -> ParserConfig:
         measurement_types = {

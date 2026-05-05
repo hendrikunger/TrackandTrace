@@ -29,10 +29,13 @@ class TcpBarcodeScannerAdapterConfig:
     heartbeat_check_interval_seconds: float = 5.0
     startup_command: str | None = "LON"
     shutdown_command: str | None = "LOFF"
-    command_terminator: str = "\r"
+    command_terminator: str = "\r\n"
     command_host: str | None = None
     command_port: int | None = None
     command_timeout_seconds: float = 2.0
+    command_hold_seconds: float = 2.0
+    startup_command_attempts: int = 3
+    startup_command_retry_seconds: float = 5.0
 
 
 class TcpBarcodeScannerAdapter(MeasurementAdapter):
@@ -45,6 +48,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         self._started_at: datetime | None = None
         self._last_heartbeat_at: datetime | None = None
         self._client_writers: list[asyncio.StreamWriter] = []
+        self._working_mode_enabled = False
 
     async def start(self, context: AdapterContext) -> None:
         self._stop_event.clear()
@@ -90,8 +94,6 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
             state=AdapterState.ONLINE,
             message=f"Listening on {self.config.listen_host}:{self.config.listen_port}",
         )
-        await self._send_startup_command()
-
         watchdog_task = asyncio.create_task(self._heartbeat_watchdog())
         serve_task = asyncio.create_task(server.serve_forever())
         try:
@@ -117,6 +119,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         peer_host = peer[0] if isinstance(peer, tuple) and peer else None
         peer_port = peer[1] if isinstance(peer, tuple) and len(peer) > 1 else None
         self._client_writers.append(writer)
+        startup_command_task: asyncio.Task[None] | None = None
 
         try:
             if (
@@ -139,6 +142,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                 message=f"Scanner connected from {peer_host or 'unknown'}:{peer_port or '?'}",
                 last_event_at=self._last_heartbeat_at,
             )
+            startup_command_task = asyncio.create_task(self._send_startup_command_with_retries())
 
             buffer = b""
             while not self._stop_event.is_set():
@@ -184,6 +188,9 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                         last_event_at=now,
                     )
         finally:
+            if startup_command_task is not None:
+                startup_command_task.cancel()
+                await self._await_cancelled(startup_command_task)
             if writer in self._client_writers:
                 self._client_writers.remove(writer)
             writer.close()
@@ -225,22 +232,43 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
     async def _send_startup_command(self) -> None:
         if self.config.startup_command is None:
             return
-        await self._write_command(self.config.startup_command)
+        if await self._write_command(self.config.startup_command):
+            self._working_mode_enabled = True
+
+    async def _send_startup_command_with_retries(self) -> None:
+        attempts = max(1, self.config.startup_command_attempts)
+        for attempt in range(attempts):
+            if self._stop_event.is_set():
+                return
+            if attempt > 0:
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),
+                        timeout=self.config.startup_command_retry_seconds,
+                    )
+                    return
+                except TimeoutError:
+                    pass
+            await self._send_startup_command()
 
     async def _send_shutdown_command(self) -> None:
+        if not self._working_mode_enabled:
+            return
+        self._working_mode_enabled = False
         if self.config.shutdown_command is None:
             return
         await self._write_command(self.config.shutdown_command)
 
-    async def _write_command(self, command: str) -> None:
+    async def _write_command(self, command: str) -> bool:
         command_host = self.config.command_host or self.config.allowed_peer_host
         command_port = self.config.command_port or self.config.listen_port
         if not command_host:
             logger.warning(
-                "Scanner command skipped because no command host is configured",
+                "Scanner command %s skipped because no command host is configured",
+                command,
                 extra={"adapter": self.name, "command": command},
             )
-            return
+            return False
 
         payload = f"{command}{self.config.command_terminator}".encode(
             self.config.encoding,
@@ -254,9 +282,14 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
             )
             writer.write(payload)
             await writer.drain()
+            await asyncio.sleep(self.config.command_hold_seconds)
         except (TimeoutError, ConnectionError, OSError) as exc:
             logger.warning(
-                "Scanner command send failed",
+                "Scanner command %s send to %s:%s failed with %s",
+                command,
+                command_host,
+                command_port,
+                exc.__class__.__name__,
                 extra={
                     "adapter": self.name,
                     "command": command,
@@ -265,13 +298,16 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                     "error": exc.__class__.__name__,
                 },
             )
-            return
+            return False
         finally:
             if writer is not None:
                 writer.close()
                 await writer.wait_closed()
         logger.info(
-            "Sent scanner command",
+            "Sent scanner command %s to %s:%s",
+            command,
+            command_host,
+            command_port,
             extra={
                 "adapter": self.name,
                 "command": command,
@@ -279,6 +315,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                 "port": command_port,
             },
         )
+        return True
 
 
 def _is_heartbeat_message(content: str) -> bool:

@@ -60,12 +60,17 @@ def build_scanner_adapter_from_station_config(
             startup_command=_optional_str(config, "scanner_startup_command") or "LON",
             shutdown_command=_optional_str(config, "scanner_shutdown_command") or "LOFF",
             command_terminator=_decode_escape_sequences(
-                _optional_str(config, "scanner_command_terminator") or "\\r"
+                _optional_str(config, "scanner_command_terminator") or "\\r\\n"
             ),
             command_host=_optional_str(config, "scanner_command_host")
             or _optional_str(config, "scanner_host"),
             command_port=int(config.get("scanner_command_port") or config.get("scanner_port")),
             command_timeout_seconds=float(config.get("scanner_command_timeout_seconds", 2.0)),
+            command_hold_seconds=float(config.get("scanner_command_hold_seconds", 2.0)),
+            startup_command_attempts=int(config.get("scanner_startup_command_attempts", 3)),
+            startup_command_retry_seconds=float(
+                config.get("scanner_startup_command_retry_seconds", 5.0)
+            ),
         )
     )
 
@@ -118,9 +123,14 @@ def tcp_line_config_from_dict(config: dict[str, Any]) -> TcpLineAdapterConfig:
     return TcpLineAdapterConfig(
         host=_required_str(config, "host"),
         port=_required_int(config, "port"),
+        measurement_type=_optional_str(config, "measurement_type"),
         name=_optional_str(config, "name") or "tcp-line",
         source_type=_optional_str(config, "source_type") or "tcp",
         rueckmeldenummer=_optional_str(config, "rueckmeldenummer"),
+        command=_decode_escape_sequences(_optional_str(config, "command"))
+        if _optional_str(config, "command") is not None
+        else None,
+        poll_interval_seconds=float(config.get("poll_interval_seconds", 1.0)),
         reconnect_delay_seconds=float(config.get("reconnect_delay_seconds", 2.0)),
         encoding=_optional_str(config, "encoding") or "utf-8",
     )

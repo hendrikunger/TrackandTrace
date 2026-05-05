@@ -30,6 +30,11 @@ class StationConfigResponse(BaseModel):
     measurement_types: list[MeasurementTypeConfig] = Field(default_factory=list)
 
 
+class MeasurementRequestCommandResponse(BaseModel):
+    request_id: int | None = None
+    rueckmeldenummer: str | None = None
+
+
 class StationHeartbeatRequest(BaseModel):
     station_id: int
     status: Literal["online", "degraded", "offline", "starting"] = "online"

@@ -8,6 +8,7 @@ from slf_trace.api.schemas.companion import (
     BarcodeScanRequest,
     BarcodeScanResponse,
     MeasurementRequest,
+    MeasurementRequestCommandResponse,
     MeasurementResponse,
     MeasurementTypeConfig,
     ParsedMeasurementRequest,
@@ -20,6 +21,7 @@ from slf_trace.api.schemas.companion import (
     StationHeartbeatResponse,
 )
 from slf_trace.api.services.companion import (
+    get_next_measurement_request,
     get_station_measurement_types,
     get_station_or_404,
     parse_and_record_measurement,
@@ -59,6 +61,24 @@ async def get_station_config(station_id: int, session: SessionDep) -> StationCon
             )
             for measurement_type in measurement_types
         ],
+    )
+
+
+@router.get(
+    "/stations/{station_id}/measurement-request",
+    response_model=MeasurementRequestCommandResponse,
+)
+async def get_measurement_request(
+    station_id: int,
+    after_id: int,
+    session: SessionDep,
+) -> MeasurementRequestCommandResponse:
+    request = await get_next_measurement_request(session, station_id, after_id)
+    if request is None:
+        return MeasurementRequestCommandResponse()
+    return MeasurementRequestCommandResponse(
+        request_id=request.id,
+        rueckmeldenummer=request.content.strip(),
     )
 
 

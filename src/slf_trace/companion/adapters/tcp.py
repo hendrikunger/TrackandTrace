@@ -15,9 +15,12 @@ from slf_trace.companion.adapters.base import (
 class TcpLineAdapterConfig:
     host: str
     port: int
+    measurement_type: str | None = None
     name: str = "tcp-line"
     source_type: str = "tcp"
     rueckmeldenummer: str | None = None
+    command: str | None = None
+    poll_interval_seconds: float = 1.0
     reconnect_delay_seconds: float = 2.0
     encoding: str = "utf-8"
 
@@ -57,6 +60,13 @@ class TcpLineMeasurementAdapter(MeasurementAdapter):
         self._status = AdapterStatus(name=self.name, state=AdapterState.ONLINE)
         try:
             while not self._stop_event.is_set():
+                if self.config.command is not None:
+                    if not _measurement_needed(context):
+                        await self._sleep_until_poll()
+                        continue
+                    writer.write(self.config.command.encode(self.config.encoding))
+                    await writer.drain()
+
                 line = await reader.readline()
                 if not line:
                     raise OSError("TCP connection closed by peer.")
@@ -64,6 +74,8 @@ class TcpLineMeasurementAdapter(MeasurementAdapter):
                 content = line.decode(self.config.encoding).strip()
                 if not content:
                     continue
+                if self.config.measurement_type is not None and not _has_measurement_key(content):
+                    content = f"{self.config.measurement_type}={content}"
 
                 event = parse_payload_event(
                     station_id=context.station_id,
@@ -78,9 +90,20 @@ class TcpLineMeasurementAdapter(MeasurementAdapter):
                     state=AdapterState.ONLINE,
                     last_event_at=datetime.now(UTC),
                 )
+                if self.config.command is not None:
+                    await self._sleep_until_poll()
         finally:
             writer.close()
             await writer.wait_closed()
+
+    async def _sleep_until_poll(self) -> None:
+        try:
+            await asyncio.wait_for(
+                self._stop_event.wait(),
+                timeout=self.config.poll_interval_seconds,
+            )
+        except TimeoutError:
+            return
 
     async def _sleep_until_retry(self) -> None:
         try:
@@ -90,3 +113,11 @@ class TcpLineMeasurementAdapter(MeasurementAdapter):
             )
         except TimeoutError:
             return
+
+
+def _has_measurement_key(content: str) -> bool:
+    return "=" in content or ":" in content or "\n" in content or "," in content
+
+
+def _measurement_needed(context: AdapterContext) -> bool:
+    return context.measurement_needed is None or context.measurement_needed()

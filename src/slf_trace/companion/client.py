@@ -11,6 +11,16 @@ class CompanionClient:
     async def fetch_station_config(self, station_id: int) -> dict[str, Any]:
         return await self._request("GET", f"/api/companion/stations/{station_id}/config")
 
+    async def fetch_measurement_request(
+        self,
+        station_id: int,
+        after_id: int,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/companion/stations/{station_id}/measurement-request?after_id={after_id}",
+        )
+
     async def post_heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/api/companion/heartbeats", json=payload)
 

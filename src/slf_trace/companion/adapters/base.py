@@ -121,6 +121,7 @@ class AdapterStatus:
 AdapterEmit = Callable[[MeasurementEvent], Awaitable[None]]
 RawPayloadEmit = Callable[[RawPayloadEvent], Awaitable[None]]
 BarcodeScanEmit = Callable[[BarcodeScanEvent], Awaitable[None]]
+MeasurementNeeded = Callable[[], bool]
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ class AdapterContext:
     parser_config: ParserConfig
     emit_raw_payload: RawPayloadEmit | None = None
     emit_barcode_scan: BarcodeScanEmit | None = None
+    measurement_needed: MeasurementNeeded | None = None
 
 
 class MeasurementAdapter(ABC):

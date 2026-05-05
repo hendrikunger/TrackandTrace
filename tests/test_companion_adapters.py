@@ -1,3 +1,5 @@
+import asyncio
+from decimal import Decimal
 
 import pytest
 
@@ -48,6 +50,8 @@ def test_tcp_line_config_from_station_adapter_config() -> None:
             "host": "10.0.0.60",
             "port": 9100,
             "measurement_type": "breite",
+            "command": "?\\r",
+            "poll_interval_seconds": 1.5,
             "encoding": "utf-8",
             "reconnect_delay_seconds": 1.5,
         }
@@ -55,6 +59,9 @@ def test_tcp_line_config_from_station_adapter_config() -> None:
 
     assert config.host == "10.0.0.60"
     assert config.port == 9100
+    assert config.measurement_type == "breite"
+    assert config.command == "?\r"
+    assert config.poll_interval_seconds == 1.5
     assert config.encoding == "utf-8"
     assert config.reconnect_delay_seconds == 1.5
 
@@ -74,6 +81,51 @@ def test_factory_builds_tcp_line_adapter() -> None:
     assert isinstance(adapters[0], TcpLineMeasurementAdapter)
 
 
+@pytest.mark.asyncio
+async def test_tcp_line_adapter_maps_bare_value_to_configured_measurement_type(
+    monkeypatch,
+) -> None:
+    events = []
+    adapter = TcpLineMeasurementAdapter(
+        TcpLineAdapterConfig(
+            host="127.0.0.1",
+            port=9000,
+            measurement_type="breite",
+            reconnect_delay_seconds=0.01,
+        )
+    )
+
+    class FakeReader:
+        async def readline(self):
+            return b"7.5\n"
+
+    class FakeWriter:
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def open_connection(host, port):
+        return FakeReader(), FakeWriter()
+
+    async def emit(event):
+        events.append(event)
+        await adapter.stop()
+
+    monkeypatch.setattr("asyncio.open_connection", open_connection)
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=_parser_config(),
+    )
+
+    await adapter.start(context)
+
+    assert events[0].values[0].measurement_type == "breite"
+    assert events[0].values[0].value == Decimal("7.5")
+
+
 def test_factory_builds_scanner_adapter_from_station_config() -> None:
     adapter = build_scanner_adapter_from_station_config(
         {
@@ -90,6 +142,9 @@ def test_factory_builds_scanner_adapter_from_station_config() -> None:
     assert adapter.config.shutdown_command == "LOFF"
     assert adapter.config.command_host == "10.0.0.21"
     assert adapter.config.command_port == 9004
+    assert adapter.config.command_hold_seconds == 2.0
+    assert adapter.config.startup_command_attempts == 3
+    assert adapter.config.startup_command_retry_seconds == 5.0
 
 
 @pytest.mark.asyncio
@@ -99,6 +154,7 @@ async def test_tcp_barcode_scanner_adapter_sends_keyence_command(monkeypatch) ->
         TcpBarcodeScannerAdapterConfig(
             allowed_peer_host="10.0.0.21",
             command_timeout_seconds=0.01,
+            command_hold_seconds=0.0,
         )
     )
 
@@ -125,7 +181,7 @@ async def test_tcp_barcode_scanner_adapter_sends_keyence_command(monkeypatch) ->
     await adapter._send_startup_command()
     await adapter._send_shutdown_command()
 
-    assert commands == [b"LON\r", b"LOFF\r"]
+    assert commands == [b"LON\r\n", b"LOFF\r\n"]
 
 
 @pytest.mark.asyncio
@@ -226,6 +282,15 @@ async def test_tcp_line_adapter_emits_measurement_event(monkeypatch) -> None:
             return b"breite=7.5\n"
 
     class FakeWriter:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, payload):
+            self.commands.append(payload)
+
+        async def drain(self):
+            return None
+
         def close(self):
             return None
 
@@ -252,4 +317,128 @@ async def test_tcp_line_adapter_emits_measurement_event(monkeypatch) -> None:
 
     assert events[0].source_type == "tcp"
     assert events[0].rueckmeldenummer == "RM-TCP"
+    assert events[0].values[0].measurement_type == "breite"
+
+
+@pytest.mark.asyncio
+async def test_tcp_line_adapter_sends_query_command(monkeypatch) -> None:
+    events = []
+    writer = None
+    adapter = TcpLineMeasurementAdapter(
+        TcpLineAdapterConfig(
+            host="127.0.0.1",
+            port=9000,
+            command="?\r",
+            poll_interval_seconds=0.01,
+            reconnect_delay_seconds=0.01,
+        )
+    )
+
+    class FakeReader:
+        async def readline(self):
+            return b"breite=7.5\n"
+
+    class FakeWriter:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, payload):
+            self.commands.append(payload)
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def open_connection(host, port):
+        nonlocal writer
+        writer = FakeWriter()
+        return FakeReader(), writer
+
+    async def emit(event):
+        events.append(event)
+        await adapter.stop()
+
+    monkeypatch.setattr("asyncio.open_connection", open_connection)
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=_parser_config(),
+    )
+
+    await adapter.start(context)
+
+    assert writer is not None
+    assert writer.commands == [b"?\r"]
+    assert events[0].values[0].measurement_type == "breite"
+
+
+@pytest.mark.asyncio
+async def test_tcp_line_adapter_waits_for_measurement_request_before_query(
+    monkeypatch,
+) -> None:
+    events = []
+    needed = False
+    writer = None
+    adapter = TcpLineMeasurementAdapter(
+        TcpLineAdapterConfig(
+            host="127.0.0.1",
+            port=9000,
+            command="?\r",
+            poll_interval_seconds=0.01,
+            reconnect_delay_seconds=0.01,
+        )
+    )
+
+    class FakeReader:
+        async def readline(self):
+            return b"breite=7.5\n"
+
+    class FakeWriter:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, payload):
+            self.commands.append(payload)
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def open_connection(host, port):
+        nonlocal writer
+        writer = FakeWriter()
+        return FakeReader(), writer
+
+    async def emit(event):
+        events.append(event)
+        await adapter.stop()
+
+    monkeypatch.setattr("asyncio.open_connection", open_connection)
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=_parser_config(),
+        measurement_needed=lambda: needed,
+    )
+
+    task = asyncio.create_task(adapter.start(context))
+    await asyncio.sleep(0.03)
+
+    assert writer is not None
+    assert writer.commands == []
+
+    needed = True
+    await task
+
+    assert writer.commands == [b"?\r"]
     assert events[0].values[0].measurement_type == "breite"

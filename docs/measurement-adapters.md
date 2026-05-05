@@ -156,11 +156,16 @@ Station-specific fields live on the station record, not in `adapter_config`:
 The companion automatically builds the scanner listener from these station fields.
 
 When the listener starts, it opens a TCP connection to the scanner command endpoint and sends `LON`
-followed by carriage return to put the scanner into working mode. During adapter shutdown, it sends
-`LOFF` followed by carriage return. By default, commands go to `scanner_host:scanner_port`. These
+followed by CR/LF to put the scanner into working mode. During adapter shutdown, it sends
+`LOFF` followed by CR/LF. By default, commands go to `scanner_host:scanner_port`. These
 defaults can be overridden with `scanner_command_host`, `scanner_command_port`,
 `scanner_startup_command`, `scanner_shutdown_command`, and `scanner_command_terminator` when a
-station-specific scanner command contract differs.
+station-specific scanner command contract differs. The startup command is retried three times by
+default, five seconds apart, because the scanner command port can lag behind the station listener
+after a reconnect. Override this with `scanner_startup_command_attempts` and
+`scanner_startup_command_retry_seconds` if needed. The command socket stays open for two seconds
+after the payload is sent because the Keyence command endpoint may ignore commands when the client
+disconnects immediately. Override this with `scanner_command_hold_seconds` if needed.
 
 ### SMB1 Polling Adapter
 

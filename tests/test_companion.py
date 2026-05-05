@@ -24,6 +24,7 @@ from slf_trace.config import Settings
 class FakeClient:
     def __init__(self, *, fail_first_event: bool = False) -> None:
         self.fail_first_event = fail_first_event
+        self.measurement_requests = []
         self.station_config_calls = []
         self.heartbeats = []
         self.events = []
@@ -39,6 +40,12 @@ class FakeClient:
             "scanner_protocol": None,
             "measurement_types": [],
         }
+
+    async def fetch_measurement_request(self, station_id: int, after_id: int):
+        for request in self.measurement_requests:
+            if request["request_id"] > after_id:
+                return request
+        return {"request_id": None, "rueckmeldenummer": None}
 
     async def post_heartbeat(self, payload):
         self.heartbeats.append(payload)
@@ -212,6 +219,77 @@ def test_runtime_queues_barcode_scan_events(tmp_path) -> None:
     queued = runtime.outbox.pending()
     assert queued[0].endpoint == "/api/companion/barcode-scans"
     assert queued[0].payload["rueckmeldenummer"] == "RM-1"
+
+
+@pytest.mark.asyncio
+async def test_runtime_attaches_measurement_request_to_measurement_events(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 17, "rueckmeldenummer": "RM-SCAN"}
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+
+    assert await runtime.fetch_measurement_request_once()
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="tcp",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="breite",
+                    value=Decimal("12.3"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    queued = runtime.outbox.pending()
+    assert queued[0].endpoint == "/api/companion/measurements"
+    assert queued[0].payload["rueckmeldenummer"] == "RM-SCAN"
+    assert runtime.latest_rueckmeldenummer is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_barcode_scan_does_not_request_measurement(tmp_path) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+
+    await runtime.handle_barcode_scan_event(
+        BarcodeScanEvent(
+            station_id=1,
+            source_type="keyence_srx",
+            rueckmeldenummer="RM-SCAN",
+        )
+    )
+
+    assert runtime.latest_rueckmeldenummer is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_ignores_measurement_events_without_barcode(tmp_path) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="tcp",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="breite",
+                    value=Decimal("12.3"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    assert runtime.outbox.count() == 0
 
 
 def test_runtime_queues_station_diagnostic_events(tmp_path) -> None:

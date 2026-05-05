@@ -306,6 +306,25 @@ async def get_station_measurement_types(
     return list(result.scalars())
 
 
+async def get_next_measurement_request(
+    session: AsyncSession,
+    station_id: int,
+    after_id: int,
+) -> RawPayload | None:
+    await get_station_or_404(session, station_id)
+    result = await session.execute(
+        select(RawPayload)
+        .where(
+            RawPayload.station_id == station_id,
+            RawPayload.source_type == "measurement_request",
+            RawPayload.id > after_id,
+        )
+        .order_by(RawPayload.id.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def validate_measurement_types(
     session: AsyncSession,
     payload: MeasurementRequest,
