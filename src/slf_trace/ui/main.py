@@ -428,7 +428,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "id": None,
             "station": None,
             "measured_at": None,
-            "result": None,
             "source": None,
             "raw_payload_id": None,
         },
@@ -437,8 +436,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="stretch_width",
     )
     measurement_values = pn.pane.Markdown("Search a Rückmeldenummer to view measurements.")
-    raw_payload_id = pn.widgets.IntInput(name="Raw payload ID", start=1, value=1)
-    load_payload_button = pn.widgets.Button(name="Inspect payload", button_type="primary")
     raw_payload_detail = pn.pane.Markdown("Raw payload content appears here.")
     lookup_message = pn.pane.Alert("", alert_type="info", visible=False)
 
@@ -489,6 +486,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_last_scan_raw_payload_id: int | None = None
     kiosk_pending_existing_measurement: dict[str, str] | None = None
     kiosk_waiting_for_new_measurement = False
+    kiosk_measurement_baseline_id = 0
 
     station_rows: list[dict[str, Any]] = []
     selected_station_id: int | None = None
@@ -1099,7 +1097,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
         selected_history.update(value_rows)
         history_table.value = pd.DataFrame(history_rows)
-        set_message(lookup_message, f"Loaded {len(history_rows)} measurements.")
+        if rueckmeldenummer.value.strip():
+            set_message(lookup_message, f"Loaded {len(history_rows)} measurements.")
+        else:
+            set_message(lookup_message, f"Loaded latest {len(history_rows)} measurements.")
 
     def select_measurement(event: Any) -> None:
         if not event.new:
@@ -1112,18 +1113,17 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         row = history_table.value.iloc[row_index]
         payload_id = row["raw_payload_id"]
         if payload_id and not pd.isna(payload_id):
-            raw_payload_id.value = int(payload_id)
-            inspect_payload()
+            inspect_payload(int(payload_id))
         else:
             raw_payload_detail.object = "Selected measurement has no linked raw payload."
         measurement_values.object = values_markdown(
             selected_history.get(int(row["id"]), [])
         )
 
-    def inspect_payload(_: object | None = None) -> None:
+    def inspect_payload(raw_payload_id: int) -> None:
         try:
             with session_scope(settings) as session:
-                detail = load_raw_payload(session, raw_payload_id.value)
+                detail = load_raw_payload(session, raw_payload_id)
         except Exception as exc:  # noqa: BLE001
             set_message(lookup_message, f"Could not load raw payload: {exc}", "danger")
             return
@@ -1175,12 +1175,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     def load_kiosk_station(_: object | None = None) -> None:
         nonlocal kiosk_current_station_id, kiosk_current_barcode, kiosk_last_scan_raw_payload_id
         nonlocal kiosk_pending_existing_measurement, kiosk_waiting_for_new_measurement
+        nonlocal kiosk_measurement_baseline_id
         if kiosk_station.value is None:
             return
         kiosk_current_station_id = int(kiosk_station.value)
         kiosk_current_barcode = None
         kiosk_pending_existing_measurement = None
         kiosk_waiting_for_new_measurement = False
+        kiosk_measurement_baseline_id = 0
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
         with session_scope(settings) as session:
@@ -1314,6 +1316,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def request_kiosk_measurement(_: object | None = None) -> None:
         nonlocal kiosk_waiting_for_new_measurement, kiosk_pending_existing_measurement
+        nonlocal kiosk_measurement_baseline_id
         if kiosk_current_station_id is None or kiosk_current_barcode is None:
             return
         kiosk_pending_existing_measurement = None
@@ -1322,6 +1325,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_new_measurement_button.visible = False
         try:
             with session_scope(settings) as session:
+                latest_current_station_measurement = load_latest_measurement_for_part(
+                    session,
+                    kiosk_current_station_id,
+                    kiosk_current_barcode,
+                )
+                kiosk_measurement_baseline_id = (
+                    latest_current_station_measurement.id
+                    if latest_current_station_measurement is not None
+                    else 0
+                )
                 create_measurement_request(
                     session,
                     station_id=kiosk_current_station_id,
@@ -1362,6 +1375,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def check_kiosk_measurement(_: object | None = None) -> None:
         nonlocal kiosk_current_barcode, kiosk_waiting_for_new_measurement
+        nonlocal kiosk_measurement_baseline_id
         if kiosk_current_station_id is None or kiosk_current_barcode is None:
             set_message(kiosk_message, "Bitte zuerst Barcode übernehmen.", "warning")
             return
@@ -1374,6 +1388,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     session,
                     kiosk_current_station_id,
                     kiosk_current_barcode,
+                    after_measurement_id=kiosk_measurement_baseline_id,
                 )
         except Exception as exc:  # noqa: BLE001
             set_message(kiosk_message, f"Messwert konnte nicht geprüft werden: {exc}", "danger")
@@ -1394,6 +1409,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode.value = ""
         kiosk_current_barcode = None
         kiosk_waiting_for_new_measurement = False
+        kiosk_measurement_baseline_id = 0
         kiosk_check_measurement_button.disabled = True
         for input_widget in kiosk_measurement_inputs.values():
             input_widget.value = ""
@@ -1499,7 +1515,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     adapter_add_button.on_click(add_adapter)
     adapter_remove_button.on_click(remove_adapter)
     lookup_button.on_click(lookup_measurements)
-    load_payload_button.on_click(inspect_payload)
     kiosk_refresh_button.on_click(refresh_stations)
     kiosk_barcode_button.on_click(accept_kiosk_barcode)
     kiosk_barcode.param.watch(process_kiosk_barcode, "value")
@@ -1797,11 +1812,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                         history_station,
                         lookup_button,
                         sizing_mode="stretch_width",
+                        align="end",
                     ),
                     lookup_message,
                     history_table,
                     measurement_values,
-                    pn.Row(raw_payload_id, load_payload_button),
                     raw_payload_detail,
                     sizing_mode="stretch_width",
                 ),
@@ -1995,6 +2010,8 @@ def load_latest_measurement_for_part(
     session: Session,
     station_id: int,
     rueckmeldenummer: str,
+    *,
+    after_measurement_id: int = 0,
 ) -> Measurement | None:
     return session.scalars(
         select(Measurement)
@@ -2003,6 +2020,7 @@ def load_latest_measurement_for_part(
         .where(
             Measurement.station_id == station_id,
             Measurement.part.has(rueckmeldenummer=rueckmeldenummer),
+            Measurement.id > after_measurement_id,
         )
         .order_by(Measurement.measured_at.desc(), Measurement.id.desc())
         .limit(1)
@@ -2191,9 +2209,6 @@ def load_measurement_history(
     rueckmeldenummer: str,
     station_id: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
-    if not rueckmeldenummer:
-        return [], {}
-
     query = (
         select(Measurement)
         .join(Measurement.part)
@@ -2201,10 +2216,13 @@ def load_measurement_history(
             selectinload(Measurement.station),
             selectinload(Measurement.values).selectinload(MeasurementValue.type_definition),
         )
-        .where(Measurement.part.has(rueckmeldenummer=rueckmeldenummer))
     )
+    if rueckmeldenummer:
+        query = query.where(Measurement.part.has(rueckmeldenummer=rueckmeldenummer))
     if station_id is not None:
         query = query.where(Measurement.station_id == station_id)
+    if not rueckmeldenummer:
+        query = query.limit(50)
 
     measurements = session.scalars(
         query.order_by(Measurement.measured_at.desc(), Measurement.id.desc())
@@ -2218,7 +2236,6 @@ def load_measurement_history(
                 "id": measurement.id,
                 "station": measurement.station.name,
                 "measured_at": format_datetime(measurement.measured_at),
-                "result": measurement.result_status,
                 "source": measurement.source_type,
                 "raw_payload_id": measurement.raw_payload_id,
             }
@@ -2229,7 +2246,6 @@ def load_measurement_history(
                 "label": value.type_definition.label if value.type_definition else "",
                 "value": value.value,
                 "unit": value.unit or "",
-                "result": value.result_status or "",
             }
             for value in sorted(measurement.values, key=lambda item: item.measurement_type)
         ]
@@ -2259,12 +2275,10 @@ def values_markdown(values: list[dict[str, Any]]) -> str:
     if not values:
         return "No measurement values recorded."
 
-    lines = ["### Measurement values", "| Type | Value | Result |", "| --- | --- | --- |"]
+    lines = ["### Measurement values", "| Type | Value |", "| --- | --- |"]
     for value in values:
         label = value["label"] or value["type"]
-        lines.append(
-            f"| {label} | {value['value']} {value['unit']} | {value['result'] or '-'} |"
-        )
+        lines.append(f"| {label} | {value['value']} {value['unit']} |")
     return "\n".join(lines)
 
 
