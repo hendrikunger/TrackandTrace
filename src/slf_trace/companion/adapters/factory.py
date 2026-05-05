@@ -62,6 +62,10 @@ def build_scanner_adapter_from_station_config(
             command_terminator=_decode_escape_sequences(
                 _optional_str(config, "scanner_command_terminator") or "\\r"
             ),
+            command_host=_optional_str(config, "scanner_command_host")
+            or _optional_str(config, "scanner_host"),
+            command_port=int(config.get("scanner_command_port") or config.get("scanner_port")),
+            command_timeout_seconds=float(config.get("scanner_command_timeout_seconds", 2.0)),
         )
     )
 

@@ -88,6 +88,44 @@ def test_factory_builds_scanner_adapter_from_station_config() -> None:
     assert adapter.config.listen_port == 9004
     assert adapter.config.startup_command == "LON"
     assert adapter.config.shutdown_command == "LOFF"
+    assert adapter.config.command_host == "10.0.0.21"
+    assert adapter.config.command_port == 9004
+
+
+@pytest.mark.asyncio
+async def test_tcp_barcode_scanner_adapter_sends_keyence_command(monkeypatch) -> None:
+    commands = []
+    adapter = TcpBarcodeScannerAdapter(
+        TcpBarcodeScannerAdapterConfig(
+            allowed_peer_host="10.0.0.21",
+            command_timeout_seconds=0.01,
+        )
+    )
+
+    class FakeWriter:
+        def write(self, payload):
+            commands.append(payload)
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def open_connection(host, port):
+        assert host == "10.0.0.21"
+        assert port == 9004
+        return object(), FakeWriter()
+
+    monkeypatch.setattr("asyncio.open_connection", open_connection)
+
+    await adapter._send_startup_command()
+    await adapter._send_shutdown_command()
+
+    assert commands == [b"LON\r", b"LOFF\r"]
 
 
 @pytest.mark.asyncio
@@ -112,18 +150,9 @@ async def test_tcp_barcode_scanner_adapter_emits_barcode_scan_event() -> None:
             return self.chunks.pop(0)
 
     class FakeWriter:
-        def __init__(self) -> None:
-            self.commands = []
-
         def get_extra_info(self, key):
             if key == "peername":
                 return ("10.0.0.21", 12345)
-            return None
-
-        def write(self, payload):
-            self.commands.append(payload)
-
-        async def drain(self):
             return None
 
         def close(self):
@@ -148,7 +177,6 @@ async def test_tcp_barcode_scanner_adapter_emits_barcode_scan_event() -> None:
     assert len(barcode_events) == 1
     assert barcode_events[0].rueckmeldenummer == "RM-12345"
     assert barcode_events[0].raw_payload == "RM-12345"
-    assert writer.commands == [b"LON\r", b"LOFF\r"]
 
 
 def test_scanner_frame_parser_accepts_crlf_and_lf_prefix_cr_suffix() -> None:

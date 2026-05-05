@@ -166,10 +166,23 @@ class CompanionRuntime:
         self.configure_adapters_from_station_config()
         await self.send_heartbeat(status="starting")
 
+        tasks = [
+            asyncio.create_task(self.run_heartbeat_loop()),
+            asyncio.create_task(self.run_outbox_loop()),
+            asyncio.create_task(self.run_adapters()),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            await self.stop_adapters()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def stop_adapters(self) -> None:
         await asyncio.gather(
-            self.run_heartbeat_loop(),
-            self.run_outbox_loop(),
-            self.run_adapters(),
+            *(adapter.stop() for adapter in self.adapters),
+            return_exceptions=True,
         )
 
     async def run_adapters(self) -> None:

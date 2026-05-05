@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,8 @@ from slf_trace.companion.adapters.base import (
     BarcodeScanEvent,
     MeasurementAdapter,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,9 @@ class TcpBarcodeScannerAdapterConfig:
     startup_command: str | None = "LON"
     shutdown_command: str | None = "LOFF"
     command_terminator: str = "\r"
+    command_host: str | None = None
+    command_port: int | None = None
+    command_timeout_seconds: float = 2.0
 
 
 class TcpBarcodeScannerAdapter(MeasurementAdapter):
@@ -39,7 +45,6 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         self._started_at: datetime | None = None
         self._last_heartbeat_at: datetime | None = None
         self._client_writers: list[asyncio.StreamWriter] = []
-        self._working_mode_writers: set[asyncio.StreamWriter] = set()
 
     async def start(self, context: AdapterContext) -> None:
         self._stop_event.clear()
@@ -61,8 +66,8 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
 
     async def stop(self) -> None:
         self._stop_event.set()
+        await self._send_shutdown_command()
         for writer in list(self._client_writers):
-            await self._send_shutdown_command(writer)
             writer.close()
         if self._server is not None:
             self._server.close()
@@ -85,6 +90,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
             state=AdapterState.ONLINE,
             message=f"Listening on {self.config.listen_host}:{self.config.listen_port}",
         )
+        await self._send_startup_command()
 
         watchdog_task = asyncio.create_task(self._heartbeat_watchdog())
         serve_task = asyncio.create_task(server.serve_forever())
@@ -133,7 +139,6 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                 message=f"Scanner connected from {peer_host or 'unknown'}:{peer_port or '?'}",
                 last_event_at=self._last_heartbeat_at,
             )
-            await self._send_startup_command(writer)
 
             buffer = b""
             while not self._stop_event.is_set():
@@ -179,7 +184,6 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                         last_event_at=now,
                     )
         finally:
-            await self._send_shutdown_command(writer)
             if writer in self._client_writers:
                 self._client_writers.remove(writer)
             writer.close()
@@ -218,30 +222,63 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         except asyncio.CancelledError:
             return
 
-    async def _send_startup_command(self, writer: asyncio.StreamWriter) -> None:
+    async def _send_startup_command(self) -> None:
         if self.config.startup_command is None:
             return
-        await self._write_command(writer, self.config.startup_command)
-        self._working_mode_writers.add(writer)
+        await self._write_command(self.config.startup_command)
 
-    async def _send_shutdown_command(self, writer: asyncio.StreamWriter) -> None:
-        if writer not in self._working_mode_writers:
-            return
-        self._working_mode_writers.discard(writer)
+    async def _send_shutdown_command(self) -> None:
         if self.config.shutdown_command is None:
             return
-        await self._write_command(writer, self.config.shutdown_command)
+        await self._write_command(self.config.shutdown_command)
 
-    async def _write_command(self, writer: asyncio.StreamWriter, command: str) -> None:
+    async def _write_command(self, command: str) -> None:
+        command_host = self.config.command_host or self.config.allowed_peer_host
+        command_port = self.config.command_port or self.config.listen_port
+        if not command_host:
+            logger.warning(
+                "Scanner command skipped because no command host is configured",
+                extra={"adapter": self.name, "command": command},
+            )
+            return
+
         payload = f"{command}{self.config.command_terminator}".encode(
             self.config.encoding,
             errors="replace",
         )
+        writer: asyncio.StreamWriter | None = None
         try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(command_host, command_port),
+                timeout=self.config.command_timeout_seconds,
+            )
             writer.write(payload)
             await writer.drain()
-        except (ConnectionError, OSError):
+        except (TimeoutError, ConnectionError, OSError) as exc:
+            logger.warning(
+                "Scanner command send failed",
+                extra={
+                    "adapter": self.name,
+                    "command": command,
+                    "host": command_host,
+                    "port": command_port,
+                    "error": exc.__class__.__name__,
+                },
+            )
             return
+        finally:
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+        logger.info(
+            "Sent scanner command",
+            extra={
+                "adapter": self.name,
+                "command": command,
+                "host": command_host,
+                "port": command_port,
+            },
+        )
 
 
 def _is_heartbeat_message(content: str) -> bool:
