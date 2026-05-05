@@ -24,6 +24,9 @@ class TcpBarcodeScannerAdapterConfig:
     reconnect_delay_seconds: float = 2.0
     heartbeat_timeout_seconds: float = 90.0
     heartbeat_check_interval_seconds: float = 5.0
+    startup_command: str | None = "LON"
+    shutdown_command: str | None = "LOFF"
+    command_terminator: str = "\r"
 
 
 class TcpBarcodeScannerAdapter(MeasurementAdapter):
@@ -36,6 +39,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         self._started_at: datetime | None = None
         self._last_heartbeat_at: datetime | None = None
         self._client_writers: list[asyncio.StreamWriter] = []
+        self._working_mode_writers: set[asyncio.StreamWriter] = set()
 
     async def start(self, context: AdapterContext) -> None:
         self._stop_event.clear()
@@ -58,6 +62,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
     async def stop(self) -> None:
         self._stop_event.set()
         for writer in list(self._client_writers):
+            await self._send_shutdown_command(writer)
             writer.close()
         if self._server is not None:
             self._server.close()
@@ -128,6 +133,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                 message=f"Scanner connected from {peer_host or 'unknown'}:{peer_port or '?'}",
                 last_event_at=self._last_heartbeat_at,
             )
+            await self._send_startup_command(writer)
 
             buffer = b""
             while not self._stop_event.is_set():
@@ -173,6 +179,7 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
                         last_event_at=now,
                     )
         finally:
+            await self._send_shutdown_command(writer)
             if writer in self._client_writers:
                 self._client_writers.remove(writer)
             writer.close()
@@ -209,6 +216,31 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         try:
             await task
         except asyncio.CancelledError:
+            return
+
+    async def _send_startup_command(self, writer: asyncio.StreamWriter) -> None:
+        if self.config.startup_command is None:
+            return
+        await self._write_command(writer, self.config.startup_command)
+        self._working_mode_writers.add(writer)
+
+    async def _send_shutdown_command(self, writer: asyncio.StreamWriter) -> None:
+        if writer not in self._working_mode_writers:
+            return
+        self._working_mode_writers.discard(writer)
+        if self.config.shutdown_command is None:
+            return
+        await self._write_command(writer, self.config.shutdown_command)
+
+    async def _write_command(self, writer: asyncio.StreamWriter, command: str) -> None:
+        payload = f"{command}{self.config.command_terminator}".encode(
+            self.config.encoding,
+            errors="replace",
+        )
+        try:
+            writer.write(payload)
+            await writer.drain()
+        except (ConnectionError, OSError):
             return
 
 

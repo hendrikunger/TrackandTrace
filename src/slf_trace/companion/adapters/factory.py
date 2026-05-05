@@ -57,6 +57,11 @@ def build_scanner_adapter_from_station_config(
             heartbeat_check_interval_seconds=float(
                 config.get("scanner_heartbeat_check_interval_seconds", 5.0)
             ),
+            startup_command=_optional_str(config, "scanner_startup_command") or "LON",
+            shutdown_command=_optional_str(config, "scanner_shutdown_command") or "LOFF",
+            command_terminator=_decode_escape_sequences(
+                _optional_str(config, "scanner_command_terminator") or "\\r"
+            ),
         )
     )
 

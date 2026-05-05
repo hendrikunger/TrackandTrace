@@ -86,6 +86,8 @@ def test_factory_builds_scanner_adapter_from_station_config() -> None:
     assert isinstance(adapter, TcpBarcodeScannerAdapter)
     assert adapter.config.allowed_peer_host == "10.0.0.21"
     assert adapter.config.listen_port == 9004
+    assert adapter.config.startup_command == "LON"
+    assert adapter.config.shutdown_command == "LOFF"
 
 
 @pytest.mark.asyncio
@@ -110,9 +112,18 @@ async def test_tcp_barcode_scanner_adapter_emits_barcode_scan_event() -> None:
             return self.chunks.pop(0)
 
     class FakeWriter:
+        def __init__(self) -> None:
+            self.commands = []
+
         def get_extra_info(self, key):
             if key == "peername":
                 return ("10.0.0.21", 12345)
+            return None
+
+        def write(self, payload):
+            self.commands.append(payload)
+
+        async def drain(self):
             return None
 
         def close(self):
@@ -131,11 +142,13 @@ async def test_tcp_barcode_scanner_adapter_emits_barcode_scan_event() -> None:
         emit_barcode_scan=emit_barcode,
     )
 
-    await adapter._handle_client(context, FakeReader(), FakeWriter())
+    writer = FakeWriter()
+    await adapter._handle_client(context, FakeReader(), writer)
 
     assert len(barcode_events) == 1
     assert barcode_events[0].rueckmeldenummer == "RM-12345"
     assert barcode_events[0].raw_payload == "RM-12345"
+    assert writer.commands == [b"LON\r", b"LOFF\r"]
 
 
 def test_scanner_frame_parser_accepts_crlf_and_lf_prefix_cr_suffix() -> None:
