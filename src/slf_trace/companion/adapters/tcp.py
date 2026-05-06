@@ -116,7 +116,7 @@ class TcpLineMeasurementAdapter(MeasurementAdapter):
 
 
 def _has_measurement_key(content: str) -> bool:
-    return "=" in content or ":" in content or "\n" in content or "," in content
+    return "=" in content or ":" in content
 
 
 def _measurement_needed(context: AdapterContext) -> bool:

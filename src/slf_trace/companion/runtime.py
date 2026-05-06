@@ -37,7 +37,7 @@ class CompanionRuntimeConfig:
     state_path: str
     heartbeat_interval_seconds: float
     outbox_retry_interval_seconds: float
-    measurement_aggregation_timeout_seconds: float = 10.0
+    measurement_aggregation_timeout_seconds: float = 300.0
     station_token: str | None = None
 
 

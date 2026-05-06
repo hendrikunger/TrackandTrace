@@ -126,6 +126,51 @@ async def test_tcp_line_adapter_maps_bare_value_to_configured_measurement_type(
     assert events[0].values[0].value == Decimal("7.5")
 
 
+@pytest.mark.asyncio
+async def test_tcp_line_adapter_maps_decimal_comma_to_configured_measurement_type(
+    monkeypatch,
+) -> None:
+    events = []
+    adapter = TcpLineMeasurementAdapter(
+        TcpLineAdapterConfig(
+            host="127.0.0.1",
+            port=9000,
+            measurement_type="innenring",
+            reconnect_delay_seconds=0.01,
+        )
+    )
+
+    class FakeReader:
+        async def readline(self):
+            return b"32,2\n"
+
+    class FakeWriter:
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def open_connection(host, port):
+        return FakeReader(), FakeWriter()
+
+    async def emit(event):
+        events.append(event)
+        await adapter.stop()
+
+    monkeypatch.setattr("asyncio.open_connection", open_connection)
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=ParserConfig(measurement_types={"breite", "innenring"}),
+    )
+
+    await adapter.start(context)
+
+    assert events[0].values[0].measurement_type == "innenring"
+    assert events[0].values[0].value == Decimal("32.2")
+
+
 def test_factory_builds_scanner_adapter_from_station_config() -> None:
     adapter = build_scanner_adapter_from_station_config(
         {
