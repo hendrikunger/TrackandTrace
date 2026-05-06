@@ -256,6 +256,132 @@ async def test_runtime_attaches_measurement_request_to_measurement_events(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_runtime_aggregates_adapter_values_for_one_measurement_request(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 17, "rueckmeldenummer": "RM-SCAN"}
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "measurement_types": [
+            {"code": "breite", "label": "Breite", "unit": "mm"},
+            {"code": "ueberstand", "label": "Überstand", "unit": "mm"},
+        ]
+    }
+
+    assert await runtime.fetch_measurement_request_once()
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="tcp",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="breite",
+                    value=Decimal("12.3"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    assert runtime.outbox.count() == 0
+    assert runtime.latest_rueckmeldenummer == "RM-SCAN"
+
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="smb1",
+            measured_at=datetime(2026, 4, 28, 15, 0, 1, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-2",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="ueberstand",
+                    value=Decimal("1.5"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    queued = runtime.outbox.pending()
+    assert queued[0].endpoint == "/api/companion/measurements"
+    assert queued[0].payload["rueckmeldenummer"] == "RM-SCAN"
+    assert queued[0].payload["source_type"] == "companion_aggregate"
+    assert queued[0].payload["idempotency_key"] == "measurement_request:1:17"
+    assert queued[0].payload["values"] == [
+        {
+            "measurement_type": "breite",
+            "value": "12.3",
+            "unit": "mm",
+            "result_status": None,
+        },
+        {
+            "measurement_type": "ueberstand",
+            "value": "1.5",
+            "unit": "mm",
+            "result_status": None,
+        },
+    ]
+    assert runtime.latest_rueckmeldenummer is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_submits_partial_measurement_after_timeout(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 18, "rueckmeldenummer": "RM-PARTIAL"}
+    )
+    config = _config(str(tmp_path / "state.sqlite3"))
+    config = CompanionRuntimeConfig(
+        station_id=config.station_id,
+        server_url=config.server_url,
+        state_path=config.state_path,
+        heartbeat_interval_seconds=config.heartbeat_interval_seconds,
+        outbox_retry_interval_seconds=config.outbox_retry_interval_seconds,
+        measurement_aggregation_timeout_seconds=0.0,
+    )
+    runtime = CompanionRuntime(config, client=client)
+    runtime.station_config = {
+        "measurement_types": [
+            {"code": "breite", "label": "Breite", "unit": "mm"},
+            {"code": "ueberstand", "label": "Überstand", "unit": "mm"},
+        ]
+    }
+
+    assert await runtime.fetch_measurement_request_once()
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="tcp",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="breite",
+                    value=Decimal("12.3"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    assert runtime.pending_request_timed_out()
+    runtime.submit_pending_measurement(reason="timeout")
+
+    queued = runtime.outbox.pending()
+    assert queued[0].endpoint == "/api/companion/events"
+    assert queued[0].payload["event_type"] == "measurement.partial"
+    assert queued[1].endpoint == "/api/companion/measurements"
+    assert queued[1].payload["rueckmeldenummer"] == "RM-PARTIAL"
+    assert queued[1].payload["values"][0]["measurement_type"] == "breite"
+
+
+@pytest.mark.asyncio
 async def test_runtime_barcode_scan_does_not_request_measurement(tmp_path) -> None:
     runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
 

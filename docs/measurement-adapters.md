@@ -21,7 +21,10 @@ Every adapter implements:
 - `emit_barcode_scan(event)`: async callback used by barcode scanner adapters.
 
 The runtime queues emitted events into the local SQLite outbox and sends them to
-`POST /api/companion/measurements`.
+`POST /api/companion/measurements`. When a barcode/measurement request is active, the runtime can
+aggregate values from multiple adapters into one measurement. It waits for the station's assigned
+measurement types and submits once all values are present, or after the aggregation timeout with a
+partial-measurement diagnostic event.
 
 Barcode scanner adapters use `emit_barcode_scan(...)` and the runtime forwards those events to
 `POST /api/companion/barcode-scans`.

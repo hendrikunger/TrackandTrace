@@ -2,7 +2,8 @@ import asyncio
 import logging
 import platform
 import socket
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,20 @@ class CompanionRuntimeConfig:
     state_path: str
     heartbeat_interval_seconds: float
     outbox_retry_interval_seconds: float
+    measurement_aggregation_timeout_seconds: float = 10.0
     station_token: str | None = None
+
+
+@dataclass
+class PendingMeasurementRequest:
+    request_id: int
+    rueckmeldenummer: str
+    expected_measurement_types: set[str]
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    values: dict[str, Any] = field(default_factory=dict)
+    source_types: set[str] = field(default_factory=set)
+    measured_at: datetime | None = None
+    result_status: str = "unknown"
 
 
 class CompanionRuntime:
@@ -58,6 +72,7 @@ class CompanionRuntime:
         self.adapters = adapters or []
         self.station_config: dict[str, Any] | None = None
         self.latest_rueckmeldenummer: str | None = None
+        self.pending_measurement_request: PendingMeasurementRequest | None = None
         self.last_measurement_request_id = 0
 
     async def fetch_station_config(self) -> dict[str, Any]:
@@ -131,16 +146,107 @@ class CompanionRuntime:
         )
 
     async def handle_adapter_event(self, event: MeasurementEvent) -> None:
-        if event.rueckmeldenummer is None:
-            if self.latest_rueckmeldenummer is None:
+        if event.rueckmeldenummer is not None:
+            self.enqueue_measurement_event(event)
+            return
+
+        if self.pending_measurement_request is None:
+            logger.info(
+                "Ignored measurement without barcode",
+                extra={"station_id": event.station_id, "source_type": event.source_type},
+            )
+            return
+
+        self.add_adapter_event_to_pending_request(event)
+        if self.pending_request_has_all_expected_values():
+            self.submit_pending_measurement(reason="complete")
+
+    def add_adapter_event_to_pending_request(self, event: MeasurementEvent) -> None:
+        if self.pending_measurement_request is None:
+            return
+
+        pending = self.pending_measurement_request
+        if not pending.expected_measurement_types:
+            pending.expected_measurement_types = {
+                value.measurement_type for value in event.values if value.measurement_type
+            }
+
+        for value in event.values:
+            if value.measurement_type in pending.values:
                 logger.info(
-                    "Ignored measurement without barcode",
-                    extra={"station_id": event.station_id, "source_type": event.source_type},
+                    "Ignored duplicate measurement type for active request",
+                    extra={
+                        "station_id": event.station_id,
+                        "measurement_type": value.measurement_type,
+                        "source_type": event.source_type,
+                    },
                 )
-                return
-            event = replace(event, rueckmeldenummer=self.latest_rueckmeldenummer)
+                continue
+            pending.values[value.measurement_type] = value
+
+        pending.source_types.add(event.source_type)
+        pending.measured_at = max(
+            pending.measured_at or event.measured_at,
+            event.measured_at,
+        )
+        if event.result_status != "unknown":
+            pending.result_status = event.result_status
+
+    def pending_request_has_all_expected_values(self) -> bool:
+        pending = self.pending_measurement_request
+        if pending is None or not pending.expected_measurement_types:
+            return False
+        return pending.expected_measurement_types.issubset(pending.values.keys())
+
+    def submit_pending_measurement(self, *, reason: str) -> None:
+        pending = self.pending_measurement_request
+        if pending is None:
+            return
+
+        if not pending.values:
+            self.pending_measurement_request = None
             self.latest_rueckmeldenummer = None
+            return
+
+        missing_types = sorted(pending.expected_measurement_types - pending.values.keys())
+        if missing_types:
+            self.enqueue_station_event(
+                event_type="measurement.partial",
+                severity="warning",
+                message="Measurement request completed with missing adapter values.",
+                context={
+                    "request_id": pending.request_id,
+                    "rueckmeldenummer": pending.rueckmeldenummer,
+                    "missing_measurement_types": missing_types,
+                    "reason": reason,
+                },
+            )
+
+        event = MeasurementEvent(
+            station_id=self.config.station_id,
+            source_type=self.aggregate_source_type(pending.source_types),
+            measured_at=pending.measured_at or datetime.now(UTC),
+            rueckmeldenummer=pending.rueckmeldenummer,
+            idempotency_key=f"measurement_request:{self.config.station_id}:{pending.request_id}",
+            result_status=pending.result_status,
+            values=list(pending.values.values()),
+        )
         self.enqueue_measurement_event(event)
+        self.pending_measurement_request = None
+        self.latest_rueckmeldenummer = None
+
+    @staticmethod
+    def aggregate_source_type(source_types: set[str]) -> str:
+        if len(source_types) == 1:
+            return next(iter(source_types))
+        return "companion_aggregate"
+
+    def pending_request_timed_out(self) -> bool:
+        pending = self.pending_measurement_request
+        if pending is None:
+            return False
+        age = datetime.now(UTC) - pending.started_at
+        return age.total_seconds() >= self.config.measurement_aggregation_timeout_seconds
 
     async def handle_raw_payload_event(self, event: RawPayloadEvent) -> None:
         self.enqueue_raw_payload_event(event)
@@ -214,7 +320,7 @@ class CompanionRuntime:
             parser_config=parser_config,
             emit_raw_payload=self.handle_raw_payload_event,
             emit_barcode_scan=self.handle_barcode_scan_event,
-            measurement_needed=lambda: self.latest_rueckmeldenummer is not None,
+            measurement_needed=self.measurement_needed,
         )
         await asyncio.gather(*(adapter.start(context) for adapter in self.adapters))
 
@@ -231,6 +337,8 @@ class CompanionRuntime:
     async def run_measurement_request_loop(self) -> None:
         while True:
             await self.fetch_measurement_request_once()
+            if self.pending_request_timed_out():
+                self.submit_pending_measurement(reason="timeout")
             await asyncio.sleep(0.5)
 
     async def sync_measurement_request_cursor(self, *, max_requests: int = 1000) -> None:
@@ -265,6 +373,14 @@ class CompanionRuntime:
         if not rueckmeldenummer:
             return False
 
+        if self.pending_measurement_request is not None:
+            self.submit_pending_measurement(reason="replaced")
+
+        self.pending_measurement_request = PendingMeasurementRequest(
+            request_id=self.last_measurement_request_id,
+            rueckmeldenummer=rueckmeldenummer,
+            expected_measurement_types=self.expected_measurement_types(),
+        )
         self.latest_rueckmeldenummer = rueckmeldenummer
         logger.info(
             "Accepted measurement request",
@@ -275,12 +391,19 @@ class CompanionRuntime:
         )
         return True
 
-    def _parser_config_from_station_config(self) -> ParserConfig:
-        measurement_types = {
+    def measurement_needed(self) -> bool:
+        return self.pending_measurement_request is not None
+
+    def expected_measurement_types(self) -> set[str]:
+        configured_types = (self.station_config or {}).get("measurement_types", [])
+        return {
             str(measurement_type["code"])
-            for measurement_type in (self.station_config or {}).get("measurement_types", [])
+            for measurement_type in configured_types
             if measurement_type.get("code")
         }
+
+    def _parser_config_from_station_config(self) -> ParserConfig:
+        measurement_types = self.expected_measurement_types()
         if not measurement_types:
             logger.warning(
                 "Station config has no measurement types; adapter parsing will reject values."
@@ -309,6 +432,9 @@ def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeCo
         state_path=settings.companion_state_path,
         heartbeat_interval_seconds=settings.companion_heartbeat_interval_seconds,
         outbox_retry_interval_seconds=settings.companion_outbox_retry_interval_seconds,
+        measurement_aggregation_timeout_seconds=(
+            settings.companion_measurement_aggregation_timeout_seconds
+        ),
         station_token=settings.station_token,
     )
 
