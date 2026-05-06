@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -142,6 +143,59 @@ async def test_smb_adapter_waits_for_measurement_request_before_reading(tmp_path
     assert measurements == []
     assert manager.conn.retrieved_paths == []
     assert manager.conn.deleted_paths == []
+
+
+@pytest.mark.asyncio
+async def test_smb_adapter_allows_same_content_in_different_files(tmp_path) -> None:
+    measurements = []
+    manager = FakeConnectionManager()
+    manager.conn.files = {
+        "/ExcelAusgabe/result_1.csv": _csv_with_measurement("12,4"),
+        "/ExcelAusgabe/result_2.csv": _csv_with_measurement("12,4"),
+    }
+    adapter = SmbPollingMeasurementAdapter(
+        _config(tmp_path),
+        connection_manager=manager,
+    )
+
+    async def emit(event):
+        measurements.append(event)
+
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=ParserConfig(measurement_types={"ueberstand"}),
+        measurement_needed=lambda: True,
+    )
+
+    assert await adapter.poll_once(context) is True
+    assert await adapter.poll_once(context) is True
+
+    assert [measurement.values[0].value for measurement in measurements] == [
+        Decimal("12.4"),
+        Decimal("12.4"),
+    ]
+    assert manager.conn.deleted_paths == [
+        "/ExcelAusgabe/result_2.csv",
+        "/ExcelAusgabe/result_1.csv",
+    ]
+
+
+def test_smb_adapter_deletes_stale_processed_file(tmp_path) -> None:
+    manager = FakeConnectionManager()
+    adapter = SmbPollingMeasurementAdapter(
+        _config(tmp_path),
+        connection_manager=manager,
+    )
+    content = manager.conn.files["/ExcelAusgabe/result_10.csv"]
+    payload_hash = hashlib.sha256(content).hexdigest()
+    adapter._processed_hashes.add(  # noqa: SLF001
+        adapter.processed_key("/ExcelAusgabe/result_10.csv", payload_hash)
+    )
+
+    assert adapter.read_once() is None
+
+    assert manager.conn.deleted_paths == ["/ExcelAusgabe/result_10.csv"]
 
 
 def test_smb_adapter_finds_latest_numbered_file(tmp_path) -> None:

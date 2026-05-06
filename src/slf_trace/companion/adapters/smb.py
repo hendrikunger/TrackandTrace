@@ -61,6 +61,7 @@ class SmbMeasurementRead:
     file: SmbFile
     content: str
     payload_hash: str
+    processed_key: str
     value: Decimal
 
 
@@ -234,7 +235,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
                 )
             )
         await context.emit(event)
-        self._processed_hashes.add(result.payload_hash)
+        self._processed_hashes.add(result.processed_key)
 
         if self.config.delete_after_success:
             await asyncio.to_thread(self.delete_file, result.file.path)
@@ -249,7 +250,10 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
 
         content_bytes = self.retrieve_file(conn, file_info.path)
         payload_hash = hashlib.sha256(content_bytes).hexdigest()
-        if self._processed_hashes.contains(payload_hash):
+        processed_key = self.processed_key(file_info.path, payload_hash)
+        if self._processed_hashes.contains(processed_key):
+            if self.config.delete_after_success:
+                self.delete_file(file_info.path)
             return None
 
         content = content_bytes.decode(self.config.encoding, errors="replace")
@@ -258,6 +262,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
             file=file_info,
             content=content,
             payload_hash=payload_hash,
+            processed_key=processed_key,
             value=value,
         )
 
@@ -325,6 +330,10 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
     @staticmethod
     def clean_smb_name(name: str) -> str:
         return name.rstrip("\x00").strip()
+
+    @staticmethod
+    def processed_key(remote_path: str, payload_hash: str) -> str:
+        return hashlib.sha256(f"{remote_path}\0{payload_hash}".encode()).hexdigest()
 
     async def _sleep_until_poll(self) -> None:
         try:
