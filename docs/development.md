@@ -2,7 +2,22 @@
 
 ## Environment
 
-Use the WSL-native Mamba environment:
+Current local Codex/macOS development environment:
+
+```bash
+cd /Users/unhe/gitRepos/TrackandTrace
+/Users/unhe/miniforge3/bin/mamba activate slf
+python --version
+```
+
+Run commands through the environment when a non-interactive shell is used:
+
+```bash
+/Users/unhe/miniforge3/bin/mamba run -n slf pytest
+/Users/unhe/miniforge3/bin/mamba run -n slf ruff check .
+```
+
+Older Windows/WSL development environments may still use:
 
 ```bash
 cd /mnt/c/Users/unger/gitRepos/TrackandTrace
@@ -25,6 +40,129 @@ cp .env.example .env
 ```
 
 Set the PostgreSQL password in `.env`. Local `.env` files are ignored by git.
+
+## Shared Test Environment
+
+These hosts are the current lab/test environment. Credentials here are for isolated test systems
+only; do not reuse them for production.
+
+### Database
+
+- Host: `postgres.home.io`
+- IP: `10.0.0.70`
+- Port: `5432`
+- Database: `trackandtrace_dev`
+- User: `trackandtrace_admin`
+- Password: `trackandtrace_admin`
+
+Use this connection for local, API VM, and station tests unless a task explicitly says otherwise.
+
+### API VM
+
+- Host: `api.home.io`
+- SSH user: `unhe`
+- Sudo password: `apitest`
+- Repo checkout: `/opt/slf-trace/src/TrackandTrace`
+- Python environment: `/opt/slf-trace/env`
+- API service: `slf-trace-api.service`
+- UI service: `slf-trace-ui.service`
+- Public admin UI: `http://api.home.io:5006/app`
+- Public kiosk UI: `http://api.home.io:5006/kiosk`
+- API health: `http://api.home.io:8000/health`
+
+Connect:
+
+```bash
+ssh unhe@api.home.io
+```
+
+Update the API VM from git and restart services:
+
+```bash
+cd /opt/slf-trace/src/TrackandTrace
+echo apitest | sudo -S -p "" deploy/update-test-server.sh
+```
+
+Check service state:
+
+```bash
+systemctl status slf-trace-api.service
+systemctl status slf-trace-ui.service
+journalctl -u slf-trace-api.service -n 100 --no-pager
+journalctl -u slf-trace-ui.service -n 100 --no-pager
+```
+
+### Ubuntu Test Station
+
+- Host/IP: `10.0.0.196`
+- SSH user: `u1`
+- Sudo password: `u1`
+- Repo checkout: `/opt/slf-trace/src/TrackandTrace`
+- Packaged/current environment: `/opt/slf-trace/current/env`
+- Companion service: `slf-trace-companion.service`
+- Kiosk service: `slf-trace-kiosk.service`
+- Default assigned station: `BREITE-DEV-01`
+- Default station id in test database: `3`
+- Server URL: `http://api.home.io:8000`
+
+Connect:
+
+```bash
+ssh u1@10.0.0.196
+```
+
+Update the station from git and restart the companion/kiosk services:
+
+```bash
+cd /opt/slf-trace/src/TrackandTrace
+echo u1 | sudo -S -p "" deploy/update-test-station.sh
+```
+
+Check service state:
+
+```bash
+systemctl status slf-trace-companion.service
+systemctl status slf-trace-kiosk.service
+journalctl -u slf-trace-companion.service -n 100 --no-pager
+journalctl -u slf-trace-kiosk.service -n 100 --no-pager
+```
+
+Restart only the companion:
+
+```bash
+echo u1 | sudo -S -p "" systemctl restart slf-trace-companion.service
+```
+
+### Test Hardware And Simulators
+
+Keyence scanner:
+
+- IP: `172.16.2.20`
+- Port: `9004`
+- Working mode command: `LON\r\n`
+- Off command: `LOFF\r\n`
+
+Demo TCP measurement server:
+
+- Host: `10.0.0.107`
+- Port: `55169`
+- Query command from station: `?\r`
+- The response may be a bare value, for example `32,2`.
+
+TrueNAS SMB test share:
+
+- Server: `truenas.home.io`
+- Share path: `//truenas.home.io/agents/ExcelAusgabe`
+- User: `ai-agent`
+- Password: `hnbcZLqu5q8B50D5N068wp`
+- Test behavior: the SMB adapter reads CSV files and deletes them after a successful read.
+
+Current multi-adapter test station setup:
+
+- SMB adapter `smb-truenas-test` provides measurement type `breite`.
+- TCP adapter `tcp-test` provides measurement type `innenring`.
+- A barcode starts one collection request. Each adapter should stop polling after its own value has
+  been received. The multi-adapter request timeout is five minutes.
 
 ## Database Tools
 

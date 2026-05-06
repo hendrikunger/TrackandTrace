@@ -4,7 +4,12 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 
 from slf_trace.api.schemas.admin import StationConfigUpdate
-from slf_trace.api.services.admin import adapter_problem_message, is_station_online, station_health
+from slf_trace.api.services.admin import (
+    adapter_problem_message,
+    current_station_event,
+    is_station_online,
+    station_health,
+)
 
 
 def test_station_online_requires_recent_online_heartbeat() -> None:
@@ -72,6 +77,40 @@ def test_station_health_does_not_degrade_for_warning_diagnostic() -> None:
 
     assert state == "online"
     assert message is None
+
+
+def test_current_station_event_ignores_event_superseded_by_measurement() -> None:
+    event = SimpleNamespace(
+        occurred_at=datetime(2026, 5, 6, 14, 0, tzinfo=UTC),
+        severity="warning",
+        event_type="measurement.partial",
+        message="Measurement request completed with missing adapter values.",
+    )
+
+    assert (
+        current_station_event(
+            event,
+            datetime(2026, 5, 6, 14, 5, tzinfo=UTC),
+        )
+        is None
+    )
+
+
+def test_current_station_event_keeps_event_after_latest_measurement() -> None:
+    event = SimpleNamespace(
+        occurred_at=datetime(2026, 5, 6, 14, 10, tzinfo=UTC),
+        severity="error",
+        event_type="adapter.failure",
+        message="Adapter failed.",
+    )
+
+    assert (
+        current_station_event(
+            event,
+            datetime(2026, 5, 6, 14, 5, tzinfo=UTC),
+        )
+        is event
+    )
 
 
 def test_adapter_problem_message_ignores_online_adapters() -> None:

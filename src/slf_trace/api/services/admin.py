@@ -67,9 +67,17 @@ async def list_station_summaries(session: AsyncSession) -> list[StationSummary]:
         .group_by(StationEvent.station_id)
         .subquery()
     )
+    latest_measurement_at = (
+        select(
+            Measurement.station_id,
+            func.max(Measurement.created_at).label("created_at"),
+        )
+        .group_by(Measurement.station_id)
+        .subquery()
+    )
 
     result = await session.execute(
-        select(Station, StationHeartbeat, StationEvent)
+        select(Station, StationHeartbeat, StationEvent, latest_measurement_at.c.created_at)
         .outerjoin(
             latest_heartbeat_at,
             latest_heartbeat_at.c.station_id == Station.id,
@@ -88,6 +96,10 @@ async def list_station_summaries(session: AsyncSession) -> list[StationSummary]:
             (StationEvent.station_id == Station.id)
             & (StationEvent.occurred_at == latest_event_at.c.occurred_at),
         )
+        .outerjoin(
+            latest_measurement_at,
+            latest_measurement_at.c.station_id == Station.id,
+        )
         .options(
             selectinload(Station.measurement_type_links).selectinload(
                 StationMeasurementType.measurement_type
@@ -97,8 +109,8 @@ async def list_station_summaries(session: AsyncSession) -> list[StationSummary]:
     )
 
     summaries = []
-    for station, heartbeat, event in result.unique().all():
-        summaries.append(_station_summary(station, heartbeat, event))
+    for station, heartbeat, event, measurement_at in result.unique().all():
+        summaries.append(_station_summary(station, heartbeat, event, measurement_at))
     return summaries
 
 
@@ -128,7 +140,12 @@ async def get_station_summary(session: AsyncSession, station_id: int) -> Station
         key=lambda event: event.occurred_at,
         default=None,
     )
-    return _station_summary(station, latest_heartbeat, latest_event)
+    return _station_summary(
+        station,
+        latest_heartbeat,
+        latest_event,
+        await _latest_measurement_at(session, station.id),
+    )
 
 
 async def update_station_config(
@@ -165,7 +182,12 @@ async def update_station_config(
         key=lambda event: event.occurred_at,
         default=None,
     )
-    return _station_summary(station, latest_heartbeat, latest_event)
+    return _station_summary(
+        station,
+        latest_heartbeat,
+        latest_event,
+        await _latest_measurement_at(session, station.id),
+    )
 
 
 async def list_measurement_types(session: AsyncSession) -> list[MeasurementTypeSummary]:
@@ -346,7 +368,9 @@ def _station_summary(
     station: Station,
     heartbeat: StationHeartbeat | None,
     latest_event: StationEvent | None,
+    latest_measurement_at: datetime | None = None,
 ) -> StationSummary:
+    latest_event = current_station_event(latest_event, latest_measurement_at)
     last_heartbeat_at = heartbeat.received_at if heartbeat is not None else None
     status_value = heartbeat.status if heartbeat is not None else None
     online = is_station_online(status_value, last_heartbeat_at)
@@ -397,6 +421,30 @@ def _station_summary(
             )
         ],
     )
+
+
+async def _latest_measurement_at(session: AsyncSession, station_id: int) -> datetime | None:
+    result = await session.execute(
+        select(func.max(Measurement.created_at)).where(Measurement.station_id == station_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def current_station_event(
+    latest_event: StationEvent | None,
+    latest_measurement_at: datetime | None,
+) -> StationEvent | None:
+    if latest_event is None or latest_measurement_at is None:
+        return latest_event
+    event_at = latest_event.occurred_at
+    measurement_at = latest_measurement_at
+    if event_at.tzinfo is None and measurement_at.tzinfo is not None:
+        event_at = event_at.replace(tzinfo=measurement_at.tzinfo)
+    if measurement_at.tzinfo is None and event_at.tzinfo is not None:
+        measurement_at = measurement_at.replace(tzinfo=event_at.tzinfo)
+    if measurement_at > event_at:
+        return None
+    return latest_event
 
 
 def station_health(

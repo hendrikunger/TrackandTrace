@@ -17,10 +17,10 @@ from uuid import uuid4
 
 import pandas as pd
 import panel as pn
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from slf_trace.api.services.admin import is_station_online, station_health
+from slf_trace.api.services.admin import current_station_event, is_station_online, station_health
 from slf_trace.config import Settings, get_settings
 from slf_trace.models import (
     Measurement,
@@ -2018,6 +2018,14 @@ def build_kiosk_app() -> pn.Column:
 
 
 def load_station_rows(session: Session) -> list[dict[str, Any]]:
+    latest_measurement_at = {
+        station_id: measured_at
+        for station_id, measured_at in session.execute(
+            select(Measurement.station_id, func.max(Measurement.created_at)).group_by(
+                Measurement.station_id
+            )
+        )
+    }
     stations = session.scalars(
         select(Station)
         .options(
@@ -2041,6 +2049,10 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
             station.events,
             key=lambda event: event.occurred_at,
             default=None,
+        )
+        latest_event = current_station_event(
+            latest_event,
+            latest_measurement_at.get(station.id),
         )
         status = latest_heartbeat.status if latest_heartbeat else None
         received_at = latest_heartbeat.received_at if latest_heartbeat else None
