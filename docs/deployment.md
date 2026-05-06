@@ -338,6 +338,29 @@ The script:
 This update route is for the online test server only. Offline production should use versioned
 release bundles so rollback is just a `current` link switch plus service restart.
 
+## Test Station Update
+
+Online test stations can also update from a git checkout. This is only for pilot/test machines; the
+offline production station install still uses packed release bundles.
+
+Use `deploy/update-test-station.sh` on the station:
+
+```bash
+cd /opt/slf-trace/src/TrackandTrace
+git status --short
+sudo deploy/update-test-station.sh
+```
+
+The script:
+
+- fetches and fast-forwards the configured branch, defaulting to `origin/main`
+- refuses to continue if the station checkout has local changes
+- reinstalls the package into the existing station environment with `smb` and `serial` extras
+- refreshes `/usr/local/bin/slf-trace-kiosk-browser` from the checkout
+- restarts `slf-trace-companion.service`
+- runs a companion service check and central kiosk URL smoke check when `SERVER_URL` and `STATION_ID`
+  are configured
+
 ## Windows Server Build
 
 Build Windows server artifacts on a Windows x64 machine that has internet access and matches the

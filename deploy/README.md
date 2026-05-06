@@ -24,6 +24,7 @@ Production machines still need role-specific `.env` values edited after first in
 
 - Online test server: use `deploy/update-test-server.sh` against the git checkout on
   `api.home.io`.
+- Online test stations: use `deploy/update-test-station.sh` against the git checkout on the station.
 - Offline production: use versioned release bundles from `deploy/scripts/build-packed-env.ps1` or
   `deploy/scripts/build-packed-env.sh`, then install with the role-specific install script.
 

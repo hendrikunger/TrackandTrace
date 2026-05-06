@@ -95,7 +95,7 @@ def smb_config_from_dict(config: dict[str, Any]) -> SmbPollingAdapterConfig:
         encoding=_optional_str(config, "encoding") or "cp1252",
         delimiter=_optional_str(config, "delimiter") or ";",
         filename_pattern=_optional_str(config, "filename_pattern") or r"_(\d+)\.csv$",
-        delete_after_success=bool(config.get("delete_after_success", False)),
+        delete_after_success=bool(config.get("delete_after_success", True)),
         delete_with_smbclient=bool(config.get("delete_with_smbclient", True)),
         processed_hashes_path=_optional_str(config, "processed_hashes_path"),
     )

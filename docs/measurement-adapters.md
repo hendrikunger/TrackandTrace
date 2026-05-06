@@ -177,6 +177,10 @@ SMB1 share. It is based on the working station behavior:
 - reconnect when `echo(b"ping")` fails.
 - poll `/ExcelAusgabe` and select the highest numbered file matching `_(\d+)\.csv$`.
 - decode as `cp1252`, take the last non-empty line, split by `;`, and read a configured column.
+- wait for an active kiosk measurement request before reading a file. This prevents the adapter from
+  consuming a measurement before the scanner has supplied the Rückmeldenummer.
+- delete the file after a successful upload by default. Some SMB measuring devices append the current
+  value to a date-based file; deleting after success keeps the next measurement unambiguous.
 - delete through `smbclient --option=client min protocol=NT1` when the server does not support
   reliable `pysmb` deletion.
 

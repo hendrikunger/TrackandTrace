@@ -345,7 +345,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     )
     adapter_delete_after_success = pn.widgets.Checkbox(
         name="Delete after success",
-        value=False,
+        value=True,
         width=adapter_field_width,
     )
     adapter_delete_with_smbclient = pn.widgets.Checkbox(
@@ -847,7 +847,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             adapter_encoding.value = "cp1252"
             adapter_delimiter.value = ";"
             adapter_poll_interval.value = 2.0
-            adapter_delete_after_success.value = False
+            adapter_delete_after_success.value = True
             adapter_delete_with_smbclient.value = True
             adapter_processed_hashes_path.value = "state/smb-processed.json"
             serial_port.value = "COM5"
@@ -886,7 +886,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             adapter_encoding.value = str(config.get("encoding") or "cp1252")
             adapter_delimiter.value = str(config.get("delimiter") or ";")
             adapter_poll_interval.value = float(config.get("poll_interval_seconds", 2.0))
-            adapter_delete_after_success.value = bool(config.get("delete_after_success", False))
+            adapter_delete_after_success.value = bool(config.get("delete_after_success", True))
             adapter_delete_with_smbclient.value = bool(config.get("delete_with_smbclient", True))
             adapter_processed_hashes_path.value = str(
                 config.get("processed_hashes_path") or "state/smb-processed.json"
@@ -2310,7 +2310,7 @@ def adapter_summary_rows(configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "command": config.get("command", ""),
                 "measurement_type": config.get("measurement_type", ""),
                 "value_column_index": config.get("value_column_index", ""),
-                "delete_after_success": config.get("delete_after_success", False),
+                "delete_after_success": config.get("delete_after_success", True),
             }
         )
     return rows

@@ -26,20 +26,27 @@ class FakeConnection:
             "/ExcelAusgabe/result_1.csv": _csv_with_measurement("10,1"),
             "/ExcelAusgabe/result_10.csv": _csv_with_measurement("12,4"),
         }
+        self.retrieved_paths: list[str] = []
+        self.deleted_paths: list[str] = []
 
     def listPath(self, share, remote_dir):
         assert share == "MEASURE"
         assert remote_dir == "/ExcelAusgabe"
-        return [
-            FakeEntry(".Trash", isDirectory=True),
-            FakeEntry("result_1.csv\x00"),
-            FakeEntry("ignored.txt"),
-            FakeEntry("result_10.csv"),
-        ]
+        entries = [FakeEntry(".Trash", isDirectory=True), FakeEntry("ignored.txt")]
+        entries.extend(
+            FakeEntry(path.rsplit("/", 1)[1]) for path in sorted(self.files)
+        )
+        return entries
 
     def retrieveFile(self, share, remote_path, buffer):
         assert share == "MEASURE"
+        self.retrieved_paths.append(remote_path)
         buffer.write(self.files[remote_path])
+
+    def deleteFiles(self, share, remote_path):
+        assert share == "MEASURE"
+        self.deleted_paths.append(remote_path)
+        self.files.pop(remote_path, None)
 
 
 class FakeConnectionManager:
@@ -62,6 +69,7 @@ def _config(tmp_path) -> SmbPollingAdapterConfig:
         measurement_type="ueberstand",
         value_column_index=13,
         rueckmeldenummer="RM-SMB",
+        delete_with_smbclient=False,
         processed_hashes_path=tmp_path / "processed.json",
     )
 
@@ -76,9 +84,10 @@ def _csv_with_measurement(value: str) -> bytes:
 async def test_smb_adapter_polls_latest_csv_and_emits_events(tmp_path) -> None:
     measurements = []
     raw_payloads = []
+    manager = FakeConnectionManager()
     adapter = SmbPollingMeasurementAdapter(
         _config(tmp_path),
-        connection_manager=FakeConnectionManager(),
+        connection_manager=manager,
     )
 
     async def emit(event):
@@ -87,14 +96,18 @@ async def test_smb_adapter_polls_latest_csv_and_emits_events(tmp_path) -> None:
     async def emit_raw_payload(event):
         raw_payloads.append(event)
 
+    measurement_active = True
+
     context = AdapterContext(
         station_id=1,
         emit=emit,
         emit_raw_payload=emit_raw_payload,
         parser_config=ParserConfig(measurement_types={"ueberstand"}),
+        measurement_needed=lambda: measurement_active,
     )
 
     assert await adapter.poll_once(context) is True
+    measurement_active = False
     assert await adapter.poll_once(context) is False
 
     assert measurements[0].source_type == "smb1"
@@ -102,6 +115,33 @@ async def test_smb_adapter_polls_latest_csv_and_emits_events(tmp_path) -> None:
     assert measurements[0].values[0].measurement_type == "ueberstand"
     assert measurements[0].values[0].value == Decimal("12.4")
     assert raw_payloads[0].payload_hash
+    assert manager.conn.deleted_paths == ["/ExcelAusgabe/result_10.csv"]
+
+
+@pytest.mark.asyncio
+async def test_smb_adapter_waits_for_measurement_request_before_reading(tmp_path) -> None:
+    measurements = []
+    manager = FakeConnectionManager()
+    adapter = SmbPollingMeasurementAdapter(
+        _config(tmp_path),
+        connection_manager=manager,
+    )
+
+    async def emit(event):
+        measurements.append(event)
+
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=ParserConfig(measurement_types={"ueberstand"}),
+        measurement_needed=lambda: False,
+    )
+
+    assert await adapter.poll_once(context) is False
+
+    assert measurements == []
+    assert manager.conn.retrieved_paths == []
+    assert manager.conn.deleted_paths == []
 
 
 def test_smb_adapter_finds_latest_numbered_file(tmp_path) -> None:

@@ -42,7 +42,7 @@ class SmbPollingAdapterConfig:
     encoding: str = "cp1252"
     delimiter: str = ";"
     filename_pattern: str = r"_(\d+)\.csv$"
-    delete_after_success: bool = False
+    delete_after_success: bool = True
     delete_with_smbclient: bool = True
     processed_hashes_path: str | Path | None = None
 
@@ -152,6 +152,15 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
 
         while not self._stop_event.is_set():
             try:
+                if not _measurement_needed(context):
+                    self._status = AdapterStatus(
+                        name=self.name,
+                        state=AdapterState.ONLINE,
+                        message="Waiting for measurement request",
+                        last_event_at=self._status.last_event_at,
+                    )
+                    await self._sleep_until_poll()
+                    continue
                 result = await asyncio.to_thread(self.read_once)
                 emitted = await self.emit_read_result(context, result)
                 self._status = AdapterStatus(
@@ -167,13 +176,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
                     last_error=str(exc),
                 )
 
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(),
-                    timeout=self.config.poll_interval_seconds,
-                )
-            except TimeoutError:
-                continue
+            await self._sleep_until_poll()
 
         self._connection_manager.close()
         self._status = AdapterStatus(name=self.name, state=AdapterState.STOPPED)
@@ -185,6 +188,8 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
         return self._status
 
     async def poll_once(self, context: AdapterContext) -> bool:
+        if not _measurement_needed(context):
+            return False
         return await self.emit_read_result(context, self.read_once())
 
     async def emit_read_result(
@@ -316,6 +321,19 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
     @staticmethod
     def clean_smb_name(name: str) -> str:
         return name.rstrip("\x00").strip()
+
+    async def _sleep_until_poll(self) -> None:
+        try:
+            await asyncio.wait_for(
+                self._stop_event.wait(),
+                timeout=self.config.poll_interval_seconds,
+            )
+        except TimeoutError:
+            return
+
+
+def _measurement_needed(context: AdapterContext) -> bool:
+    return context.measurement_needed is None or context.measurement_needed()
 
 
 def delete_remote_file_smbclient(
