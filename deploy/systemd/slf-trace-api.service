@@ -8,6 +8,7 @@ Type=simple
 User=slf-trace
 Group=slf-trace
 WorkingDirectory=/opt/slf-trace/current
+Environment=PATH=/opt/slf-trace/current/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/slf-trace/server.env
 ExecStart=/opt/slf-trace/current/env/bin/slf-trace-api
 Restart=always

@@ -1,23 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_FILE="${ENV_FILE:-/etc/slf-trace/panel.env}"
+ENV_FILE="${ENV_FILE:-/etc/slf-trace/kiosk.env}"
 
-if [[ -f "$ENV_FILE" ]]; then
+if [[ -r "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
+  set +a
+elif [[ -r /etc/slf-trace/panel.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/slf-trace/panel.env
   set +a
 fi
 
 UI_HOST="${UI_HOST:-127.0.0.1}"
 UI_PORT="${UI_PORT:-5006}"
 STATION_ID="${STATION_ID:-1}"
-KIOSK_URL="${KIOSK_URL:-http://${UI_HOST}:${UI_PORT}/kiosk?station_id=${STATION_ID}}"
+KIOSK_BASE_URL="${KIOSK_BASE_URL:-http://${UI_HOST}:${UI_PORT}}"
+KIOSK_URL="${KIOSK_URL:-${KIOSK_BASE_URL}/kiosk?station_id=${STATION_ID}}"
+
+if command -v gsettings >/dev/null 2>&1; then
+  gsettings set org.gnome.desktop.session idle-delay 0 >/dev/null 2>&1 || true
+  gsettings set org.gnome.desktop.screensaver lock-enabled false >/dev/null 2>&1 || true
+  gsettings set org.gnome.desktop.screensaver idle-activation-enabled false >/dev/null 2>&1 || true
+  gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' >/dev/null 2>&1 || true
+  gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing' >/dev/null 2>&1 || true
+fi
 
 wait_for_ui() {
   for _ in $(seq 1 120); do
-    if curl -fsS "http://${UI_HOST}:${UI_PORT}/kiosk?station_id=${STATION_ID}" >/dev/null 2>&1; then
+    if curl -fsS "$KIOSK_URL" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1

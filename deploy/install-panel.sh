@@ -6,6 +6,8 @@ RELEASE_SOURCE="${1:-.}"
 SERVICE_USER="${SERVICE_USER:-slf-trace}"
 KIOSK_USER="${KIOSK_USER:-}"
 INSTALL_KIOSK="${INSTALL_KIOSK:-false}"
+FORCE_REINSTALL="${FORCE_REINSTALL:-false}"
+INSTALL_LOCAL_UI="${INSTALL_LOCAL_UI:-false}"
 
 RELEASE_SOURCE="$(cd "$RELEASE_SOURCE" && pwd)"
 VERSION="$(head -n 1 "$RELEASE_SOURCE/VERSION")"
@@ -21,13 +23,17 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   useradd --system --home "$INSTALL_ROOT" --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
 
+if [[ -e "$RELEASE_DIR" && "$FORCE_REINSTALL" == "true" ]]; then
+  rm -rf "$RELEASE_DIR"
+fi
+
 mkdir -p "$RELEASE_DIR" "$INSTALL_ROOT/logs" "$INSTALL_ROOT/state" /etc/slf-trace
 
 if [[ -f "$RELEASE_SOURCE/env.tar.gz" ]]; then
   mkdir -p "$RELEASE_DIR/env"
   tar -xzf "$RELEASE_SOURCE/env.tar.gz" -C "$RELEASE_DIR/env"
   if [[ -x "$RELEASE_DIR/env/bin/conda-unpack" ]]; then
-    "$RELEASE_DIR/env/bin/conda-unpack"
+    PATH="$RELEASE_DIR/env/bin:$PATH" "$RELEASE_DIR/env/bin/conda-unpack"
   fi
 elif [[ -d "$RELEASE_SOURCE/env" ]]; then
   cp -a "$RELEASE_SOURCE/env" "$RELEASE_DIR/env"
@@ -48,8 +54,10 @@ fi
 ln -sfn "$RELEASE_DIR" "$CURRENT_DIR"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_ROOT" /etc/slf-trace
 
-cp "$RELEASE_DIR/deploy/systemd/slf-trace-ui.service" /etc/systemd/system/
 cp "$RELEASE_DIR/deploy/systemd/slf-trace-companion.service" /etc/systemd/system/
+if [[ "$INSTALL_LOCAL_UI" == "true" ]]; then
+  cp "$RELEASE_DIR/deploy/systemd/slf-trace-ui.service" /etc/systemd/system/
+fi
 
 if [[ -f "$RELEASE_DIR/deploy/linux/slf-trace-kiosk-browser" ]]; then
   install -o root -g root -m 0755 \
@@ -65,6 +73,41 @@ if [[ "$INSTALL_KIOSK" == "true" ]]; then
   if ! id "$KIOSK_USER" >/dev/null 2>&1; then
     useradd --create-home --shell /bin/bash "$KIOSK_USER"
   fi
+  kiosk_station_id=""
+  kiosk_server_url=""
+  if [[ -f /etc/slf-trace/panel.env ]]; then
+    kiosk_station_id="$(sed -n 's/^STATION_ID=//p' /etc/slf-trace/panel.env | tail -n 1)"
+    kiosk_server_url="$(sed -n 's/^SERVER_URL=//p' /etc/slf-trace/panel.env | tail -n 1)"
+  fi
+  kiosk_base_url=""
+  if [[ -n "$kiosk_server_url" ]]; then
+    kiosk_base_url="$(python3 - "$kiosk_server_url" <<'PY'
+from urllib.parse import urlsplit, urlunsplit
+import sys
+
+url = sys.argv[1]
+parts = urlsplit(url)
+if not parts.scheme or not parts.hostname:
+    raise SystemExit(0)
+host = parts.hostname
+if ":" in host and not host.startswith("["):
+    host = f"[{host}]"
+print(urlunsplit((parts.scheme, f"{host}:5006", "", "", "")))
+PY
+)"
+  fi
+  if [[ -n "$kiosk_station_id" ]]; then
+    kiosk_base_url="${kiosk_base_url:-http://127.0.0.1:5006}"
+    kiosk_url="$kiosk_base_url/kiosk?station_id=$kiosk_station_id"
+  else
+    kiosk_url=""
+  fi
+  cat >/etc/slf-trace/kiosk.env <<EOF
+STATION_ID=$kiosk_station_id
+KIOSK_BASE_URL=$kiosk_base_url
+KIOSK_URL=$kiosk_url
+EOF
+  chmod 0644 /etc/slf-trace/kiosk.env
   kiosk_autostart="/home/$KIOSK_USER/.config/autostart"
   mkdir -p "$kiosk_autostart"
   cp "$RELEASE_DIR/deploy/linux/slf-trace-kiosk.desktop" \
@@ -96,11 +139,21 @@ PY
 fi
 
 systemctl daemon-reload
-systemctl enable slf-trace-ui.service slf-trace-companion.service
+systemctl enable slf-trace-companion.service
+if [[ "$INSTALL_LOCAL_UI" == "true" ]]; then
+  systemctl enable slf-trace-ui.service
+else
+  systemctl stop slf-trace-ui.service >/dev/null 2>&1 || true
+  systemctl disable slf-trace-ui.service >/dev/null 2>&1 || true
+fi
 
 echo "Installed SLF Track and Trace panel release $VERSION at $CURRENT_DIR"
 echo "Edit /etc/slf-trace/panel.env if needed, then run:"
-echo "  systemctl restart slf-trace-ui.service slf-trace-companion.service"
+if [[ "$INSTALL_LOCAL_UI" == "true" ]]; then
+  echo "  systemctl restart slf-trace-ui.service slf-trace-companion.service"
+else
+  echo "  systemctl restart slf-trace-companion.service"
+fi
 if [[ "$INSTALL_KIOSK" == "true" ]]; then
   echo "Kiosk autostart configured for user $KIOSK_USER. Reboot to validate graphical kiosk startup."
 fi

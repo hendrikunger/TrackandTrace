@@ -4,6 +4,7 @@ set -euo pipefail
 INSTALL_ROOT="${INSTALL_ROOT:-/opt/slf-trace}"
 RELEASE_SOURCE="${1:-.}"
 SERVICE_USER="${SERVICE_USER:-slf-trace}"
+FORCE_REINSTALL="${FORCE_REINSTALL:-false}"
 
 RELEASE_SOURCE="$(cd "$RELEASE_SOURCE" && pwd)"
 VERSION="$(head -n 1 "$RELEASE_SOURCE/VERSION")"
@@ -19,13 +20,17 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   useradd --system --home "$INSTALL_ROOT" --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
 
+if [[ -e "$RELEASE_DIR" && "$FORCE_REINSTALL" == "true" ]]; then
+  rm -rf "$RELEASE_DIR"
+fi
+
 mkdir -p "$RELEASE_DIR" "$INSTALL_ROOT/logs" "$INSTALL_ROOT/state" /etc/slf-trace
 
 if [[ -f "$RELEASE_SOURCE/env.tar.gz" ]]; then
   mkdir -p "$RELEASE_DIR/env"
   tar -xzf "$RELEASE_SOURCE/env.tar.gz" -C "$RELEASE_DIR/env"
   if [[ -x "$RELEASE_DIR/env/bin/conda-unpack" ]]; then
-    "$RELEASE_DIR/env/bin/conda-unpack"
+    PATH="$RELEASE_DIR/env/bin:$PATH" "$RELEASE_DIR/env/bin/conda-unpack"
   fi
 elif [[ -d "$RELEASE_SOURCE/env" ]]; then
   cp -a "$RELEASE_SOURCE/env" "$RELEASE_DIR/env"

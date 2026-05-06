@@ -485,13 +485,19 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_operator_logo = pn.pane.SVG(load_logo_svg(), width=132, height=44, sizing_mode="fixed")
     kiosk_station = pn.widgets.Select(name="Station", options={}, visible=False)
     kiosk_refresh_button = pn.widgets.Button(name="Aktualisieren", button_type="light", width=130)
-    kiosk_title = pn.pane.Markdown("## Station auswählen")
+    kiosk_title = pn.pane.HTML(
+        "<div style='font-size:24px;font-weight:800;color:#1f3b57'>Station auswählen</div>",
+        sizing_mode="fixed",
+    )
     kiosk_station_badge = pn.pane.HTML(
         "",
-        sizing_mode="stretch_width",
-        styles={"min-height": "42px"},
+        sizing_mode="fixed",
     )
-    kiosk_status = pn.pane.Markdown("Bereit.")
+    kiosk_status = pn.pane.HTML("")
+    kiosk_step_message = pn.pane.HTML(
+        "<div style='font-size:24px;margin:0;color:#111827'>Bereit.</div>",
+        sizing_mode="stretch_width",
+    )
     kiosk_message = pn.pane.Alert("", alert_type="info", visible=False)
     kiosk_barcode = pn.widgets.TextInput(
         name="",
@@ -1239,7 +1245,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_station.options = {row["name"]: row["id"] for row in measurement_stations}
         if not kiosk_station.options:
             kiosk_station.value = None
-            kiosk_title.object = "## Keine Messstation konfiguriert"
+            kiosk_title.object = (
+                "<div style='font-size:24px;font-weight:800;color:#1f3b57'>"
+                "Keine Messstation konfiguriert</div>"
+            )
             kiosk_station_badge.object = ""
             kiosk_status.object = "Aktive Messstation mit Messart zuweisen."
             return
@@ -1250,7 +1259,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             kiosk_station.value = kiosk_station_id
         else:
             kiosk_station.value = None
-            kiosk_title.object = "## Station nicht gefunden"
+            kiosk_title.object = (
+                "<div style='font-size:24px;font-weight:800;color:#1f3b57'>"
+                "Station nicht gefunden</div>"
+            )
             kiosk_station_badge.object = ""
             kiosk_status.object = (
                 f"Station {kiosk_station_id} aus {kiosk_station_source} ist nicht aktiv "
@@ -1282,7 +1294,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             latest_scan = load_latest_scanner_raw_payload(session, kiosk_current_station_id)
         kiosk_last_scan_raw_payload_id = latest_scan[0] if latest_scan is not None else None
         station = station_row_by_id(kiosk_current_station_id)
-        kiosk_title.object = f"## {kiosk_workflow_title(station)}"
+        kiosk_title.object = (
+            "<div style='font-size:24px;font-weight:800;color:#1f3b57'>"
+            f"{escape(kiosk_workflow_title(station))}</div>"
+        )
         kiosk_station_badge.object = kiosk_station_badge_html(station)
         kiosk_barcode.value = ""
         kiosk_check_measurement_button.disabled = True
@@ -1600,9 +1615,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 f"{number}. {label}</span>"
             )
         kiosk_status.object = (
-            "<div style='margin:10px 0 14px 0'>"
-            + "".join(rendered_steps)
-            + f"</div><p style='font-size:20px;margin:0;color:#111827'>{message}</p>"
+            "<div style='margin:10px 0 14px 0'>" + "".join(rendered_steps) + "</div>"
+        )
+        kiosk_step_message.object = (
+            "<div style='font-size:24px;margin:0;color:#111827'>"
+            f"{escape(message)}</div>"
         )
 
     station_table.param.watch(select_station, "selection")
@@ -1862,10 +1879,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     )
     kiosk_panel = pn.Column(
         pn.Row(
-            pn.Column(
+            pn.Row(
                 kiosk_title,
                 kiosk_station_badge,
+                align="center",
                 sizing_mode="stretch_width",
+                styles={"gap": "14px"},
             ),
             pn.Spacer(sizing_mode="stretch_width"),
             kiosk_operator_logo,
@@ -1878,13 +1897,15 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             },
         ),
         kiosk_status,
-        kiosk_message,
-        pn.Row(kiosk_keep_measurement_button, kiosk_new_measurement_button),
         pn.pane.HTML(
             "<div style='font-size:28px;font-weight:800;color:#111827'>"
             "Rückmeldenummer scannen</div>"
         ),
         kiosk_barcode,
+        pn.Spacer(sizing_mode="stretch_height"),
+        kiosk_step_message,
+        kiosk_message,
+        pn.Row(kiosk_keep_measurement_button, kiosk_new_measurement_button),
         sizing_mode="stretch_width",
         css_classes=["slf-kiosk"],
         styles={

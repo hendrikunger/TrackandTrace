@@ -55,7 +55,7 @@ PY
 cp alembic.ini "$OUT_DIR/"
 cp -R migrations "$OUT_DIR/"
 mkdir -p "$OUT_DIR/deploy" "$OUT_DIR/docs"
-cp -R deploy/install-panel.sh deploy/install-server.sh deploy/templates deploy/systemd "$OUT_DIR/deploy/"
+cp -R deploy/install-panel.sh deploy/install-server.sh deploy/scripts deploy/templates deploy/systemd "$OUT_DIR/deploy/"
 cp -R deploy/linux "$OUT_DIR/deploy/"
 cp docs/deployment.md "$OUT_DIR/docs/"
 cp docs/security.md "$OUT_DIR/docs/" 2>/dev/null || true
