@@ -29,6 +29,7 @@ from slf_trace.models import (
     Part,
     RawPayload,
     Station,
+    StationHeartbeat,
     StationMeasurementType,
 )
 from slf_trace.security import generate_station_token, hash_station_token
@@ -1498,19 +1499,44 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     kiosk_current_barcode,
                     after_measurement_id=kiosk_measurement_baseline_id,
                 )
+                progress = load_kiosk_measurement_progress(
+                    session,
+                    station_id=kiosk_current_station_id,
+                    rueckmeldenummer=kiosk_current_barcode,
+                )
         except Exception as exc:  # noqa: BLE001
             set_message(kiosk_message, f"Messwert konnte nicht geprüft werden: {exc}", "danger")
             return
 
         if measurement is None:
-            set_message(
-                kiosk_message,
-                (
-                    "Noch kein Messwert vom Adapter empfangen. Messvorgang am Gerät prüfen."
-                ),
-                "warning",
-            )
-            update_kiosk_status(step=2, message="Warte auf Messwert vom Gerät.")
+            received_types = set()
+            if progress is not None:
+                received_types = update_kiosk_progress(progress)
+            if received_types:
+                missing_labels = kiosk_missing_progress_labels(
+                    progress or {},
+                    station_row_by_id(kiosk_current_station_id),
+                )
+                waiting_text = (
+                    f"Warte auf: {', '.join(missing_labels)}."
+                    if missing_labels
+                    else "Warte auf Upload."
+                )
+                set_message(
+                    kiosk_message,
+                    kiosk_progress_message(progress or {}, waiting_text),
+                    "info",
+                )
+                update_kiosk_status(step=2, message=waiting_text)
+            else:
+                set_message(
+                    kiosk_message,
+                    (
+                        "Noch kein Messwert vom Adapter empfangen. Messvorgang am Gerät prüfen."
+                    ),
+                    "warning",
+                )
+                update_kiosk_status(step=2, message="Warte auf Messwert vom Gerät.")
             return
 
         show_kiosk_measurement_found(measurement_value_text(measurement))
@@ -1535,6 +1561,19 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         )
         kiosk_message.alert_type = "success"
         kiosk_message.visible = True
+
+    def update_kiosk_progress(progress: dict[str, Any]) -> set[str]:
+        received_types = set()
+        for value in progress.get("values", []):
+            measurement_type = str(value.get("measurement_type") or "")
+            if not measurement_type:
+                continue
+            received_types.add(measurement_type)
+            input_widget = kiosk_measurement_inputs.get(measurement_type)
+            if input_widget is not None:
+                input_widget.value = kiosk_progress_value_text(value)
+                input_widget.disabled = True
+        return received_types
 
     def parse_kiosk_measurement_values() -> dict[str, Decimal]:
         values = {}
@@ -2194,6 +2233,66 @@ def measurement_value_text(measurement: Measurement) -> str:
     return ", ".join(
         f"{value.value} {value.unit or ''}".strip()
         for value in sorted(measurement.values, key=lambda item: item.measurement_type)
+    )
+
+
+def load_kiosk_measurement_progress(
+    session: Session,
+    *,
+    station_id: int,
+    rueckmeldenummer: str,
+) -> dict[str, Any] | None:
+    heartbeat = session.scalars(
+        select(StationHeartbeat)
+        .where(StationHeartbeat.station_id == station_id)
+        .order_by(StationHeartbeat.received_at.desc(), StationHeartbeat.id.desc())
+        .limit(1)
+    ).one_or_none()
+    if heartbeat is None or not heartbeat.adapter_status:
+        return None
+
+    progress = heartbeat.adapter_status.get("active_measurement_request")
+    if not isinstance(progress, dict):
+        return None
+    if str(progress.get("rueckmeldenummer") or "") != rueckmeldenummer:
+        return None
+    return progress
+
+
+def kiosk_progress_value_text(value: dict[str, Any]) -> str:
+    number = str(value.get("value") or "").replace(".", ",")
+    unit = str(value.get("unit") or "").strip()
+    return f"{number} {unit}".strip()
+
+
+def kiosk_missing_progress_labels(
+    progress: dict[str, Any],
+    station: dict[str, Any],
+) -> list[str]:
+    label_by_code = {
+        detail["code"]: detail["label"]
+        for detail in station.get("measurement_type_details", [])
+    }
+    return [
+        label_by_code.get(code, code)
+        for code in progress.get("missing_measurement_types", [])
+    ]
+
+
+def kiosk_progress_message(progress: dict[str, Any], waiting_text: str) -> str:
+    values = progress.get("values", [])
+    value_text = ", ".join(
+        f"{escape(str(value.get('measurement_type') or ''))}: "
+        f"{escape(kiosk_progress_value_text(value))}"
+        for value in values
+    )
+    return (
+        "<div style='font-size:22px;line-height:1.3;font-weight:700'>"
+        f"Messwert empfangen: {value_text}"
+        "</div>"
+        "<div style='font-size:16px;margin-top:8px'>"
+        f"{escape(waiting_text)}"
+        "</div>"
     )
 
 

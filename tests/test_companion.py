@@ -330,6 +330,46 @@ async def test_runtime_aggregates_adapter_values_for_one_measurement_request(tmp
 
 
 @pytest.mark.asyncio
+async def test_runtime_reports_partial_measurement_progress_in_heartbeat(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 18, "rueckmeldenummer": "RM-PROGRESS"}
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "measurement_types": [
+            {"code": "breite", "label": "Breite", "unit": "mm"},
+            {"code": "innenring", "label": "Innenring", "unit": "mm"},
+        ]
+    }
+
+    assert await runtime.fetch_measurement_request_once()
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="smb1",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-progress-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="breite",
+                    value=Decimal("77.7"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    progress = client.heartbeats[0]["adapter_status"]["active_measurement_request"]
+    assert progress["request_id"] == 18
+    assert progress["rueckmeldenummer"] == "RM-PROGRESS"
+    assert progress["received_measurement_types"] == ["breite"]
+    assert progress["missing_measurement_types"] == ["innenring"]
+    assert progress["values"][0]["value"] == "77.7"
+
+
+@pytest.mark.asyncio
 async def test_runtime_submits_partial_measurement_after_timeout(tmp_path) -> None:
     client = FakeClient()
     client.measurement_requests.append(

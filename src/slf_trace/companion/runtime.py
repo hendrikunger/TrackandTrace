@@ -84,20 +84,50 @@ class CompanionRuntime:
         return self.station_config
 
     def build_heartbeat_payload(self, status: str = "online") -> dict[str, Any]:
+        adapter_status: dict[str, Any] = {
+            "runtime": status,
+            "os": platform.platform(),
+            "python": platform.python_version(),
+            "outbox_pending": self.outbox.count(),
+            "adapters": {
+                adapter.name: adapter.health().as_payload() for adapter in self.adapters
+            },
+        }
+        measurement_progress = self.active_measurement_progress_payload()
+        if measurement_progress is not None:
+            adapter_status["active_measurement_request"] = measurement_progress
         return {
             "station_id": self.config.station_id,
             "status": status,
             "hostname": socket.gethostname(),
             "companion_version": __version__,
-            "adapter_status": {
-                "runtime": status,
-                "os": platform.platform(),
-                "python": platform.python_version(),
-                "outbox_pending": self.outbox.count(),
-                "adapters": {
-                    adapter.name: adapter.health().as_payload() for adapter in self.adapters
-                },
-            },
+            "adapter_status": adapter_status,
+        }
+
+    def active_measurement_progress_payload(self) -> dict[str, Any] | None:
+        pending = self.pending_measurement_request
+        if pending is None:
+            return None
+
+        received_values = [
+            {
+                "measurement_type": value.measurement_type,
+                "value": str(value.value),
+                "unit": value.unit,
+                "result_status": value.result_status,
+            }
+            for value in sorted(pending.values.values(), key=lambda item: item.measurement_type)
+        ]
+        return {
+            "request_id": pending.request_id,
+            "rueckmeldenummer": pending.rueckmeldenummer,
+            "expected_measurement_types": sorted(pending.expected_measurement_types),
+            "received_measurement_types": sorted(pending.values),
+            "missing_measurement_types": sorted(
+                pending.expected_measurement_types - pending.values.keys()
+            ),
+            "values": received_values,
+            "started_at": pending.started_at.isoformat(),
         }
 
     async def send_heartbeat(self, status: str = "online") -> dict[str, Any]:
@@ -160,6 +190,17 @@ class CompanionRuntime:
         self.add_adapter_event_to_pending_request(event)
         if self.pending_request_has_all_expected_values():
             self.submit_pending_measurement(reason="complete")
+        else:
+            await self.send_progress_heartbeat()
+
+    async def send_progress_heartbeat(self) -> None:
+        try:
+            await self.send_heartbeat(status="online")
+        except (httpx.HTTPError, OSError) as exc:
+            logger.warning(
+                "Progress heartbeat failed",
+                extra={"station_id": self.config.station_id, "error": exc.__class__.__name__},
+            )
 
     def add_adapter_event_to_pending_request(self, event: MeasurementEvent) -> None:
         if self.pending_measurement_request is None:

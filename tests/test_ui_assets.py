@@ -1,6 +1,12 @@
 from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
-from slf_trace.ui.main import kiosk_workflow_title, resolve_kiosk_station_id
+from slf_trace.ui.main import (
+    kiosk_missing_progress_labels,
+    kiosk_progress_message,
+    kiosk_progress_value_text,
+    kiosk_workflow_title,
+    resolve_kiosk_station_id,
+)
 
 
 def test_logo_svg_asset_is_available() -> None:
@@ -65,3 +71,22 @@ def test_kiosk_station_id_falls_back_to_environment() -> None:
 
 def test_kiosk_station_id_allows_local_unconfigured_mode() -> None:
     assert resolve_kiosk_station_id(Settings(station_id=None), {}) == (None, None)
+
+
+def test_kiosk_progress_helpers_format_received_values() -> None:
+    progress = {
+        "missing_measurement_types": ["innenring"],
+        "values": [
+            {"measurement_type": "breite", "value": "77.7", "unit": "mm"},
+        ],
+    }
+    station = {
+        "measurement_type_details": [
+            {"code": "breite", "label": "Breite"},
+            {"code": "innenring", "label": "Innenring"},
+        ]
+    }
+
+    assert kiosk_progress_value_text(progress["values"][0]) == "77,7 mm"
+    assert kiosk_missing_progress_labels(progress, station) == ["Innenring"]
+    assert "Messwert empfangen" in kiosk_progress_message(progress, "Warte auf Innenring.")
