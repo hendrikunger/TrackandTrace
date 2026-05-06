@@ -120,9 +120,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 min-height: 64px;
                 font-weight: 700;
             }
+            .slf-kiosk-choice.bk-btn,
             .slf-kiosk-choice .bk-btn {
                 font-size: 28px !important;
                 min-height: 152px;
+                height: 152px;
                 padding-left: 24px;
                 padding-right: 24px;
             }
@@ -519,6 +521,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         name="Wert behalten",
         button_type="success",
         width=220,
+        height=152,
         visible=False,
         css_classes=["slf-kiosk-choice"],
     )
@@ -526,6 +529,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         name="Neu messen",
         button_type="primary",
         width=220,
+        height=152,
         visible=False,
         css_classes=["slf-kiosk-choice"],
     )
