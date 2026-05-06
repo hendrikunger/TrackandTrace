@@ -17,6 +17,10 @@ New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
 
 if (Test-Path (Join-Path $ReleaseSource "env.zip")) {
     Expand-Archive -Force (Join-Path $ReleaseSource "env.zip") (Join-Path $ReleaseDir "env")
+    $CondaUnpack = Join-Path $ReleaseDir "env\Scripts\conda-unpack.exe"
+    if (Test-Path $CondaUnpack) {
+        & $CondaUnpack
+    }
 }
 elseif (Test-Path (Join-Path $ReleaseSource "env")) {
     Copy-Item -Recurse -Force (Join-Path $ReleaseSource "env") (Join-Path $ReleaseDir "env")
@@ -40,15 +44,16 @@ if (Test-Path $CurrentDir) {
 New-Item -ItemType Junction -Path $CurrentDir -Target $ReleaseDir | Out-Null
 
 $Python = Join-Path $CurrentDir "env\python.exe"
-$Api = Join-Path $CurrentDir "env\Scripts\slf-trace-api.exe"
-$Ui = Join-Path $CurrentDir "env\Scripts\slf-trace-ui.exe"
 $Alembic = Join-Path $CurrentDir "env\Scripts\alembic.exe"
 
 Push-Location $CurrentDir
 & $Alembic -c alembic.ini upgrade head
 Pop-Location
 
-$ApiAction = New-ScheduledTaskAction -Execute $Api -WorkingDirectory $CurrentDir
+$ApiAction = New-ScheduledTaskAction `
+    -Execute $Python `
+    -Argument '-c "from slf_trace.api.main import run; run()"' `
+    -WorkingDirectory $CurrentDir
 $ApiTrigger = New-ScheduledTaskTrigger -AtStartup
 $ApiPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
 Register-ScheduledTask `
@@ -59,7 +64,10 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 if ($InstallAdminUi) {
-    $UiAction = New-ScheduledTaskAction -Execute $Ui -WorkingDirectory $CurrentDir
+    $UiAction = New-ScheduledTaskAction `
+        -Execute $Python `
+        -Argument '-c "from slf_trace.ui.main import run; run()"' `
+        -WorkingDirectory $CurrentDir
     Register-ScheduledTask `
         -TaskName "SLF Track Trace UI" `
         -Action $UiAction `
@@ -70,3 +78,4 @@ if ($InstallAdminUi) {
 
 Write-Host "Installed SLF Track and Trace server release $Version at $CurrentDir"
 Write-Host "Edit .env if needed, then start tasks from Task Scheduler or reboot."
+Write-Host "Rollback: stop tasks, point $CurrentDir to the previous release under $InstallRoot\releases, then restart tasks."

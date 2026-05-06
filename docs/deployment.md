@@ -183,11 +183,26 @@ release bundles so rollback is just a `current` link switch plus service restart
 Build Windows server artifacts on a Windows x64 machine that has internet access and matches the
 production runtime class. Do not build the Windows packed environment from Linux or macOS.
 
+Required build tools on the Windows build host:
+
+- Miniforge/Mambaforge, micromamba, mamba, or conda for Windows x64.
+- Python is not required on `PATH` before the build. The build script creates the target Python
+  3.12 environment and builds the wheel inside it.
+- Git checkout at the intended release commit.
+
 Recommended first-pass build command:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File deploy\scripts\build-packed-env.ps1 `
   -Target windows-x64-server
+```
+
+If the packer is not on `PATH`, pass it explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\scripts\build-packed-env.ps1 `
+  -Target windows-x64-server `
+  -MambaExe C:\Users\<user>\miniforge3\Scripts\mamba.exe
 ```
 
 The output is written to:
@@ -202,11 +217,76 @@ Before accepting the artifact, validate:
 - `deploy\install-server.ps1` is present in the bundle
 - `deploy\templates\server.env.example` is present
 - `docs\deployment.md` and `docs\security.md` are present
+- `RELEASE_NOTES.md` exists and records target/build metadata
 - `env\Scripts\slf-trace-api.exe` works after unpacking on a clean Windows VM
 - `env\Scripts\alembic.exe -c alembic.ini upgrade head` works against a test database
 
 The Windows production install uses `deploy\install-server.ps1`. It should preserve existing
 configuration, run migrations, and register or update the Windows Scheduled Task for the API.
+
+## Windows Server Offline Install Runbook
+
+1. Copy `dist\offline\<version>\windows-x64-server\` to the offline Windows server.
+2. Verify checksums from inside the release directory:
+
+   ```powershell
+   Get-Content SHA256SUMS | ForEach-Object {
+     $parts = $_ -split "\s+", 2
+     $actual = (Get-FileHash $parts[1] -Algorithm SHA256).Hash.ToLower()
+     if ($actual -ne $parts[0]) { throw "Checksum mismatch: $($parts[1])" }
+   }
+   ```
+
+3. Install or update:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File deploy\install-server.ps1 `
+     -InstallRoot C:\SLF\TrackTrace `
+     -ReleaseSource .
+   ```
+
+   Add `-InstallAdminUi` when the server should also host the admin UI endpoint.
+
+4. Edit `C:\SLF\TrackTrace\current\.env` before starting services. Production values must include
+   the PostgreSQL connection and `COMPANION_AUTH_REQUIRED=true`.
+5. Run migration manually if the installer was stopped before completing it:
+
+   ```powershell
+   cd C:\SLF\TrackTrace\current
+   .\env\Scripts\alembic.exe -c alembic.ini upgrade head
+   ```
+
+6. Start or restart the Scheduled Tasks:
+
+   ```powershell
+   Start-ScheduledTask -TaskName "SLF Track Trace API"
+   Start-ScheduledTask -TaskName "SLF Track Trace UI"
+   ```
+
+7. Smoke check:
+
+   ```powershell
+   Invoke-WebRequest http://localhost:8000/health?database=false
+   Invoke-WebRequest http://localhost:8000/health
+   Invoke-WebRequest http://localhost:5006/app
+   ```
+
+## Windows Rollback
+
+1. Stop `SLF Track Trace API` and `SLF Track Trace UI` Scheduled Tasks.
+2. Remove the `C:\SLF\TrackTrace\current` junction.
+3. Recreate the junction to the previous version:
+
+   ```powershell
+   New-Item -ItemType Junction `
+     -Path C:\SLF\TrackTrace\current `
+     -Target C:\SLF\TrackTrace\releases\<previous-version>
+   ```
+
+4. Start the Scheduled Tasks and repeat the smoke checks.
+
+Database rollback is not automatic. Only run a database downgrade when that release has a tested
+downgrade procedure.
 
 ## Smoke Checks
 

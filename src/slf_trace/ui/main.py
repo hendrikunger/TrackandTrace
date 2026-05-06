@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -2509,12 +2510,9 @@ def parse_station_id(value: str, source: str) -> int:
 
 def run() -> None:
     settings = get_settings()
-    panel_executable = shutil.which("panel")
-    if panel_executable is None:
-        raise RuntimeError(
-            "Panel executable was not found. Install project dependencies with "
-            '`python -m pip install -e ".[dev]"`.'
-        )
+    panel_command = [sys.executable, "-m", "panel"]
+    if shutil.which("panel") is not None:
+        panel_command = ["panel"]
 
     app_resource = resources.files("slf_trace.ui").joinpath("app.py")
     kiosk_resource = resources.files("slf_trace.ui").joinpath("kiosk.py")
@@ -2523,7 +2521,7 @@ def run() -> None:
         resources.as_file(kiosk_resource) as kiosk_path,
     ):
         command = [
-            panel_executable,
+            *panel_command,
             "serve",
             "--address",
             settings.ui_host,
