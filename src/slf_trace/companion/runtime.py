@@ -447,11 +447,25 @@ class CompanionRuntime:
         return measurement_type not in pending.values
 
     def expected_measurement_types(self) -> set[str]:
+        adapter_measurement_types = self.enabled_adapter_measurement_types()
+        if adapter_measurement_types:
+            return adapter_measurement_types
+
         configured_types = (self.station_config or {}).get("measurement_types", [])
         return {
             str(measurement_type["code"])
             for measurement_type in configured_types
             if measurement_type.get("code")
+        }
+
+    def enabled_adapter_measurement_types(self) -> set[str]:
+        adapter_configs = (self.station_config or {}).get("adapters", [])
+        return {
+            measurement_type
+            for adapter_config in adapter_configs
+            if adapter_config.get("enabled", True) is not False
+            for measurement_type in [str(adapter_config.get("measurement_type") or "").strip()]
+            if measurement_type
         }
 
     def _parser_config_from_station_config(self) -> ParserConfig:

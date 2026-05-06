@@ -406,6 +406,59 @@ async def test_runtime_reports_only_missing_measurement_types_as_needed(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_runtime_expects_only_enabled_adapter_measurement_types(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 20, "rueckmeldenummer": "RM-DISABLED-ADAPTER"}
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "measurement_types": [
+            {"code": "breite", "label": "Breite", "unit": "mm"},
+            {"code": "innenring", "label": "Innenring", "unit": "mm"},
+        ],
+        "adapters": [
+            {
+                "type": "smb1_polling",
+                "enabled": True,
+                "measurement_type": "breite",
+            },
+            {
+                "type": "tcp_line",
+                "enabled": False,
+                "measurement_type": "innenring",
+            },
+        ],
+    }
+
+    assert runtime.expected_measurement_types() == {"breite"}
+    assert await runtime.fetch_measurement_request_once()
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="smb1",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-disabled-adapter-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="breite",
+                    value=Decimal("12.3"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    queued = runtime.outbox.pending()
+    assert len(queued) == 1
+    assert queued[0].endpoint == "/api/companion/measurements"
+    assert queued[0].payload["rueckmeldenummer"] == "RM-DISABLED-ADAPTER"
+    assert queued[0].payload["values"][0]["measurement_type"] == "breite"
+    assert runtime.pending_measurement_request is None
+
+
+@pytest.mark.asyncio
 async def test_runtime_submits_partial_measurement_after_timeout(tmp_path) -> None:
     client = FakeClient()
     client.measurement_requests.append(
