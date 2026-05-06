@@ -38,6 +38,23 @@ pn.extension("tabulator")
 
 _session_factory: sessionmaker[Session] | None = None
 _KIOSK_CSS_REGISTERED = False
+_KIOSK_CHOICE_BUTTON_STYLESHEET = """
+:host {
+    font-size: 24px !important;
+    height: 152px !important;
+}
+:host .bk-btn,
+.bk-btn {
+    font-size: 24px !important;
+    height: 152px !important;
+    min-height: 152px !important;
+    font-weight: 700 !important;
+}
+:host .bk-btn *,
+.bk-btn * {
+    font-size: 24px !important;
+}
+"""
 _ADMIN_TAB_STYLESHEET = """
 .bk-header {
     gap: 6px;
@@ -535,6 +552,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         height=152,
         visible=False,
         css_classes=["slf-kiosk-choice"],
+        styles={"font-size": "24px", "height": "152px"},
+        stylesheets=[_KIOSK_CHOICE_BUTTON_STYLESHEET],
     )
     kiosk_new_measurement_button = pn.widgets.Button(
         name="Neu messen",
@@ -543,6 +562,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         height=152,
         visible=False,
         css_classes=["slf-kiosk-choice"],
+        styles={"font-size": "24px", "height": "152px"},
+        stylesheets=[_KIOSK_CHOICE_BUTTON_STYLESHEET],
     )
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
     kiosk_measurement_form = pn.Column(sizing_mode="stretch_width")
