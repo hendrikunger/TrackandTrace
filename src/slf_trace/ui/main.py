@@ -133,6 +133,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             .slf-kiosk-choice .bk-btn * {
                 font-size: 24px !important;
             }
+            .slf-kiosk-choice-row .bk-btn {
+                font-size: 24px !important;
+                min-height: 152px;
+                height: 152px;
+                font-weight: 700;
+            }
             .slf-kiosk select {
                 min-height: 44px;
             }
@@ -1922,6 +1928,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         pn.Row(
             kiosk_keep_measurement_button,
             kiosk_new_measurement_button,
+            css_classes=["slf-kiosk-choice-row"],
             styles={"gap": "14px"},
         ),
         sizing_mode="stretch_width",
