@@ -121,8 +121,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 font-weight: 700;
             }
             .slf-kiosk-choice .bk-btn {
-                font-size: 22px !important;
-                min-height: 76px;
+                font-size: 28px !important;
+                min-height: 152px;
                 padding-left: 24px;
                 padding-right: 24px;
             }
