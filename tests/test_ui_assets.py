@@ -1,6 +1,7 @@
 from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
 from slf_trace.ui.main import (
+    adapter_measurement_type_codes,
     kiosk_missing_progress_labels,
     kiosk_progress_message,
     kiosk_progress_value_text,
@@ -27,6 +28,17 @@ def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
         )
         == "Breite messen"
     )
+
+
+def test_adapter_measurement_type_codes_use_enabled_adapters_only() -> None:
+    assert adapter_measurement_type_codes(
+        [
+            {"enabled": True, "measurement_type": "breite"},
+            {"enabled": False, "measurement_type": "innenring"},
+            {"measurement_type": "breite"},
+            {"enabled": True, "measurement_type": " "},
+        ]
+    ) == ["breite"]
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:

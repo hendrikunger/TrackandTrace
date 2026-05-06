@@ -30,7 +30,6 @@ from slf_trace.models import (
     RawPayload,
     Station,
     StationHeartbeat,
-    StationMeasurementType,
 )
 from slf_trace.security import generate_station_token, hash_station_token
 from slf_trace.ui.branding import load_logo_svg
@@ -248,12 +247,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="stretch_width",
         visible=False,
     )
-    measurement_types = pn.widgets.MultiChoice(
-        name="Allowed measurement types",
-        options=[],
-        width=820,
-    )
-
     adapter_table = pn.widgets.Tabulator(
         value=pd.DataFrame(),
         editors={
@@ -568,7 +561,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             with session_scope(settings) as session:
                 station_rows = load_station_rows(session)
                 type_options = load_measurement_type_options(session)
-                measurement_types.options = type_options
                 adapter_measurement_type.options = type_options
                 if type_options and not adapter_measurement_type.value:
                     adapter_measurement_type.value = type_options[0]
@@ -628,7 +620,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 sort_keys=True,
             )
             active.value = station["active"]
-            measurement_types.value = station["measurement_type_codes"]
             load_adapter_configs(station.get("adapter_config") or [])
         finally:
             loading_station_form = False
@@ -670,7 +661,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             workflow_title.value = ""
             workflow_config.value = "{}"
             active.value = True
-            measurement_types.value = []
             load_adapter_configs([])
         finally:
             loading_station_form = False
@@ -783,11 +773,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 station = Station(**values)
                 session.add(station)
                 session.flush()
-                replace_station_measurement_types(
-                    session,
-                    station.id,
-                    measurement_types.value,
-                )
                 created_station_id = station.id
         except Exception as exc:  # noqa: BLE001
             set_message(station_message, f"Could not create station: {exc}", "danger")
@@ -1038,6 +1023,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
         station = next(row for row in station_rows if row["id"] == selected_station_id)
         station["adapter_config"] = [dict(config) for config in adapter_configs]
+        update_selected_station_adapter_measurement_types()
         set_message(adapter_message, "Adapter config saved.")
 
     def add_adapter(_: object | None = None) -> None:
@@ -1131,43 +1117,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         table_data.loc[row_index, "active"] = station["active"]
         station_table.value = table_data
 
-    def autosave_measurement_types(_: object | None = None) -> None:
-        if loading_station_form:
-            return
-
-        if creating_station:
-            return
-
-        if selected_station_id is None:
-            set_message(station_message, "Select a station first.", "warning")
-            return
-
-        try:
-            with session_scope(settings) as session:
-                replace_station_measurement_types(
-                    session,
-                    selected_station_id,
-                    measurement_types.value,
-                )
-        except Exception as exc:  # noqa: BLE001
-            set_message(
-                station_message,
-                f"Could not autosave measurement type assignment: {exc}",
-                "danger",
-            )
-            return
-
-        update_selected_station_measurement_types(measurement_types.value)
-        station_message.visible = False
-
-    def update_selected_station_measurement_types(measurement_type_codes: list[str]) -> None:
+    def update_selected_station_adapter_measurement_types() -> None:
         if selected_station_id is None:
             return
 
-        station = next(
-            row for row in station_rows if row["id"] == selected_station_id
-        )
+        station = next(row for row in station_rows if row["id"] == selected_station_id)
+        measurement_type_codes = adapter_measurement_type_codes(adapter_configs)
         station["measurement_type_codes"] = measurement_type_codes
+        station["measurement_type_details"] = [
+            {"code": code, "label": code, "unit": None} for code in measurement_type_codes
+        ]
 
         table_data = station_table.value.copy()
         matching_rows = table_data.index[table_data["id"] == selected_station_id].tolist()
@@ -1701,7 +1660,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         active,
     ):
         field_widget.param.watch(autosave_config, "value")
-    measurement_types.param.watch(autosave_measurement_types, "value")
     for adapter_widget in (
         adapter_enabled,
         adapter_type,
@@ -1791,10 +1749,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     workflow_config,
                     sizing_mode="stretch_width",
                 ),
-            ),
-            (
-                "Measurements",
-                pn.Column(measurement_types, sizing_mode="stretch_width"),
             ),
             sizing_mode="stretch_width",
             stylesheets=[_ADMIN_TAB_STYLESHEET],
@@ -2031,12 +1985,10 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
         .options(
             selectinload(Station.heartbeats),
             selectinload(Station.events),
-            selectinload(Station.measurement_type_links).selectinload(
-                StationMeasurementType.measurement_type
-            ),
         )
         .order_by(Station.name)
     ).all()
+    measurement_type_details_by_code = load_measurement_type_details_by_code(session)
 
     rows = []
     for station in stations:
@@ -2072,9 +2024,7 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
             adapter_status=latest_heartbeat.adapter_status if latest_heartbeat else None,
             latest_event=latest_event,
         )
-        active_measurement_links = [
-            link for link in station.measurement_type_links if link.active
-        ]
+        measurement_type_codes = adapter_measurement_type_codes(station.adapter_config or [])
         rows.append(
             {
                 "id": station.id,
@@ -2119,22 +2069,13 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                 "adapter_status": latest_heartbeat.adapter_status
                 if latest_heartbeat
                 else None,
-                "measurement_type_codes": [
-                    link.measurement_type_code
-                    for link in active_measurement_links
-                ],
+                "measurement_type_codes": measurement_type_codes,
                 "measurement_type_details": [
-                    {
-                        "code": link.measurement_type_code,
-                        "label": link.measurement_type.label
-                        if link.measurement_type
-                        else link.measurement_type_code,
-                        "unit": link.measurement_type.unit if link.measurement_type else None,
-                    }
-                    for link in sorted(
-                        active_measurement_links,
-                        key=lambda item: item.measurement_type_code,
+                    measurement_type_details_by_code.get(
+                        code,
+                        {"code": code, "label": code, "unit": None},
                     )
+                    for code in measurement_type_codes
                 ],
             }
         )
@@ -2148,6 +2089,29 @@ def load_measurement_type_options(session: Session) -> list[str]:
             .where(MeasurementType.active.is_(True))
             .order_by(MeasurementType.code)
         )
+    )
+
+
+def load_measurement_type_details_by_code(session: Session) -> dict[str, dict[str, str | None]]:
+    return {
+        measurement_type.code: {
+            "code": measurement_type.code,
+            "label": measurement_type.label,
+            "unit": measurement_type.unit,
+        }
+        for measurement_type in session.scalars(select(MeasurementType)).all()
+    }
+
+
+def adapter_measurement_type_codes(configs: list[dict[str, Any]]) -> list[str]:
+    return sorted(
+        {
+            measurement_type
+            for config in configs
+            if config.get("enabled", True) is not False
+            for measurement_type in [str(config.get("measurement_type") or "").strip()]
+            if measurement_type
+        }
     )
 
 
@@ -2445,32 +2409,6 @@ def adapter_summary_rows(configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return rows
-
-
-def replace_station_measurement_types(
-    session: Session,
-    station_id: int,
-    measurement_type_codes: list[str],
-) -> None:
-    requested_codes = set(measurement_type_codes)
-    existing_links = session.scalars(
-        select(StationMeasurementType).where(
-            StationMeasurementType.station_id == station_id
-        )
-    ).all()
-    links_by_code = {link.measurement_type_code: link for link in existing_links}
-
-    for code, link in links_by_code.items():
-        link.active = code in requested_codes
-
-    for code in sorted(requested_codes - links_by_code.keys()):
-        session.add(
-            StationMeasurementType(
-                station_id=station_id,
-                measurement_type_code=code,
-                active=True,
-            )
-        )
 
 
 def load_measurement_history(
