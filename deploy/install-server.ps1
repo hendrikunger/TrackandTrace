@@ -10,6 +10,9 @@ $ReleaseSource = (Resolve-Path $ReleaseSource).Path
 $Version = (Get-Content (Join-Path $ReleaseSource "VERSION") -TotalCount 1).Trim()
 $ReleaseDir = Join-Path $InstallRoot "releases\$Version"
 $CurrentDir = Join-Path $InstallRoot "current"
+$ReleaseEnv = Join-Path $ReleaseDir ".env"
+$PreviousEnv = Join-Path $CurrentDir ".env"
+$CreatedTemplateEnv = $false
 
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "logs") | Out-Null
@@ -33,9 +36,17 @@ Copy-Item -Force (Join-Path $ReleaseSource "alembic.ini") $ReleaseDir
 Copy-Item -Recurse -Force (Join-Path $ReleaseSource "migrations") $ReleaseDir
 Copy-Item -Recurse -Force (Join-Path $ReleaseSource "deploy") $ReleaseDir
 
-if (-not (Test-Path (Join-Path $ReleaseDir ".env"))) {
-    Copy-Item (Join-Path $ReleaseDir "deploy\templates\server.env.example") (Join-Path $ReleaseDir ".env")
-    Write-Host "Created $ReleaseDir\.env. Edit it before starting services."
+if (Test-Path $ReleaseEnv) {
+    Write-Host "Preserved existing $ReleaseEnv."
+}
+elseif (Test-Path $PreviousEnv) {
+    Copy-Item -Force $PreviousEnv $ReleaseEnv
+    Write-Host "Copied existing configuration from $PreviousEnv to $ReleaseEnv."
+}
+else {
+    Copy-Item (Join-Path $ReleaseDir "deploy\templates\server.env.example") $ReleaseEnv
+    $CreatedTemplateEnv = $true
+    Write-Host "Created $ReleaseEnv from template. Edit it before running migrations or starting services."
 }
 
 if (Test-Path $CurrentDir) {
@@ -46,9 +57,17 @@ New-Item -ItemType Junction -Path $CurrentDir -Target $ReleaseDir | Out-Null
 $Python = Join-Path $CurrentDir "env\python.exe"
 $Alembic = Join-Path $CurrentDir "env\Scripts\alembic.exe"
 
-Push-Location $CurrentDir
-& $Alembic -c alembic.ini upgrade head
-Pop-Location
+if ($CreatedTemplateEnv) {
+    Write-Host "Skipped database migration because this first install created a template .env."
+    Write-Host "After editing $CurrentDir\.env, run:"
+    Write-Host "  cd $CurrentDir"
+    Write-Host "  .\env\Scripts\alembic.exe -c alembic.ini upgrade head"
+}
+else {
+    Push-Location $CurrentDir
+    & $Alembic -c alembic.ini upgrade head
+    Pop-Location
+}
 
 $ApiAction = New-ScheduledTaskAction `
     -Execute $Python `
@@ -77,5 +96,10 @@ if ($InstallAdminUi) {
 }
 
 Write-Host "Installed SLF Track and Trace server release $Version at $CurrentDir"
-Write-Host "Edit .env if needed, then start tasks from Task Scheduler or reboot."
+if ($CreatedTemplateEnv) {
+    Write-Host "Edit .env and run the migration command above before starting tasks or rebooting."
+}
+else {
+    Write-Host "Configuration preserved and migrations completed. Start tasks from Task Scheduler or reboot."
+}
 Write-Host "Rollback: stop tasks, point $CurrentDir to the previous release under $InstallRoot\releases, then restart tasks."

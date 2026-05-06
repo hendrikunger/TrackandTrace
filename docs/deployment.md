@@ -69,10 +69,13 @@ Responsibilities:
 
 - Unpack or install the packed environment.
 - Copy `alembic.ini`, `migrations/`, and config templates.
-- Create or update `.env`.
+- Create `.env` from template on first install, or preserve the previous release `.env` during
+  updates.
 - Set `COMPANION_AUTH_REQUIRED=true` for production unless protected by an
   equivalent deployment control.
-- Run `alembic upgrade head`.
+- Run `alembic upgrade head` after real PostgreSQL values are configured. On first install the
+  installer creates a template `.env` and skips migration; on updates it preserves the existing
+  `.env` and runs migration automatically.
 - Register startup tasks for:
   - `slf-trace-api`
   - optionally `slf-trace-ui` for admin access on the server
@@ -379,6 +382,8 @@ Before accepting the artifact, validate:
 
 The Windows production install uses `deploy\install-server.ps1`. It should preserve existing
 configuration, run migrations, and register or update the Windows Scheduled Task for the API.
+On first install, it creates a template `.env` and skips migration until the operator configures the
+real PostgreSQL values.
 
 ## Windows Server Offline Install Runbook
 
@@ -404,8 +409,10 @@ configuration, run migrations, and register or update the Windows Scheduled Task
    Add `-InstallAdminUi` when the server should also host the admin UI endpoint.
 
 4. Edit `C:\SLF\TrackTrace\current\.env` before starting services. Production values must include
-   the PostgreSQL connection and `COMPANION_AUTH_REQUIRED=true`.
-5. Run migration manually if the installer was stopped before completing it:
+   the PostgreSQL connection and `COMPANION_AUTH_REQUIRED=true`. On updates, the installer copies
+   the previous release `.env` into the new release before switching `current`.
+5. Run migration manually after first-install configuration if the installer reports that it
+   created a template `.env` and skipped migration:
 
    ```powershell
    cd C:\SLF\TrackTrace\current
@@ -416,6 +423,11 @@ configuration, run migrations, and register or update the Windows Scheduled Task
 
    ```powershell
    Start-ScheduledTask -TaskName "SLF Track Trace API"
+   ```
+
+   If installed with `-InstallAdminUi`, also run:
+
+   ```powershell
    Start-ScheduledTask -TaskName "SLF Track Trace UI"
    ```
 
@@ -424,12 +436,17 @@ configuration, run migrations, and register or update the Windows Scheduled Task
    ```powershell
    Invoke-WebRequest http://localhost:8000/health?database=false
    Invoke-WebRequest http://localhost:8000/health
+   ```
+
+   If installed with `-InstallAdminUi`, also check:
+
+   ```powershell
    Invoke-WebRequest http://localhost:5006/app
    ```
 
 ## Windows Rollback
 
-1. Stop `SLF Track Trace API` and `SLF Track Trace UI` Scheduled Tasks.
+1. Stop `SLF Track Trace API`, and stop `SLF Track Trace UI` if it was installed.
 2. Remove the `C:\SLF\TrackTrace\current` junction.
 3. Recreate the junction to the previous version:
 
