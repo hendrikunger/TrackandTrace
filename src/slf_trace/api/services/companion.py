@@ -290,6 +290,19 @@ async def get_station_measurement_types(
     session: AsyncSession,
     station_id: int,
 ) -> list[MeasurementType]:
+    station = await get_station_or_404(session, station_id)
+    adapter_codes = enabled_adapter_measurement_type_codes(station.adapter_config or [])
+    if adapter_codes:
+        result = await session.execute(
+            select(MeasurementType)
+            .where(
+                MeasurementType.code.in_(adapter_codes),
+                MeasurementType.active.is_(True),
+            )
+            .order_by(MeasurementType.code)
+        )
+        return list(result.scalars())
+
     result = await session.execute(
         select(MeasurementType)
         .join(
@@ -304,6 +317,16 @@ async def get_station_measurement_types(
         .order_by(MeasurementType.code)
     )
     return list(result.scalars())
+
+
+def enabled_adapter_measurement_type_codes(configs: list[dict[str, object]]) -> set[str]:
+    return {
+        measurement_type
+        for config in configs
+        if config.get("enabled", True) is not False
+        for measurement_type in [str(config.get("measurement_type") or "").strip()]
+        if measurement_type
+    }
 
 
 async def get_next_measurement_request(

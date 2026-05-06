@@ -207,6 +207,17 @@ def test_runtime_builds_adapters_from_station_config(tmp_path, monkeypatch) -> N
     assert runtime.adapters[1].name == "keyence-srx-scanner"
 
 
+def test_companion_service_uses_enabled_adapter_measurement_type_codes() -> None:
+    assert companion_services.enabled_adapter_measurement_type_codes(
+        [
+            {"enabled": True, "measurement_type": "breite"},
+            {"enabled": False, "measurement_type": "innenring"},
+            {"measurement_type": "breite"},
+            {"enabled": True, "measurement_type": ""},
+        ]
+    ) == {"breite"}
+
+
 def test_runtime_queues_barcode_scan_events(tmp_path) -> None:
     runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
     runtime.enqueue_barcode_scan_event(
