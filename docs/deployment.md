@@ -10,8 +10,8 @@ Build one artifact per target OS and CPU architecture:
 
 - Windows x64 server runtime for API, admin UI, migrations, and PostgreSQL access.
 - Linux x64 API runtime for API-only hosts that use an external PostgreSQL server.
-- Windows 11 x64 panel runtime for kiosk/admin Panel UI and station companion.
-- Ubuntu 24.04 x64 panel runtime for kiosk/admin Panel UI and station companion.
+- Windows 11 x64 station runtime for station companion and kiosk browser startup.
+- Ubuntu 24.04 x64 station runtime for station companion and kiosk browser startup.
 
 Do not cross-pack environments. Build the Windows bundle on Windows and the Ubuntu bundle on
 Ubuntu 24.04 or a matching runner/VM.
@@ -80,35 +80,37 @@ Responsibilities:
 PostgreSQL is expected to be installed and managed separately as a Windows service. The `.env`
 database settings must point at that PostgreSQL instance.
 
-## Windows 11 Panel Install
+## Windows 11 Station Install
 
-Use `deploy/install-panel.ps1` on Windows panel machines.
+Use `deploy/install-panel.ps1` on Windows touch panel machines.
 
 Responsibilities:
 
 - Unpack or install the packed environment.
 - Create station `.env`.
 - Add the station-specific `STATION_TOKEN` generated in the admin UI.
-- Register startup tasks for:
-  - `slf-trace-ui`
-  - `slf-trace-companion`
+- Register startup for `slf-trace-companion`.
+- Configure the browser/kiosk session to open the central UI.
 
 The Windows panel can use built-in Scheduled Tasks, avoiding third-party service wrappers in the
 offline environment.
 
-## Ubuntu 24.04 Panel Install
+## Ubuntu 24.04 Station Install
 
-Use `deploy/install-panel.sh` on Ubuntu panel machines.
+Use `deploy/install-panel.sh` on Ubuntu touch panel machines.
 
 Responsibilities:
 
 - Unpack or install the packed environment under `/opt/slf-trace`.
 - Create `/etc/slf-trace/panel.env`.
 - Add the station-specific `STATION_TOKEN` generated in the admin UI.
-- Install `systemd` units:
-  - `slf-trace-ui.service`
-  - `slf-trace-companion.service`
-- Enable and start both services.
+- Install, enable, and start `slf-trace-companion.service`.
+- Configure the desktop browser to open the central kiosk UI.
+
+The normal production station does not run `slf-trace-ui.service`. The central server runs the API
+and Panel UI; the station runs only the companion because scanner and measurement-device access is
+local to the touch PC. Use `INSTALL_LOCAL_UI=true` only for temporary development or fallback
+diagnostics.
 
 To also configure graphical kiosk boot on a GDM-based Ubuntu desktop, run the installer with:
 
@@ -117,13 +119,167 @@ sudo INSTALL_KIOSK=true KIOSK_USER=<desktop-user> deploy/install-panel.sh <relea
 ```
 
 This installs `/usr/local/bin/slf-trace-kiosk-browser`, adds an autostart entry for the kiosk user,
-and enables GDM automatic login for that user. The launcher opens:
+creates `/etc/slf-trace/kiosk.env`, and enables GDM automatic login for that user. The launcher opens:
 
 ```text
-http://127.0.0.1:5006/kiosk?station_id=<STATION_ID>
+http://<central-ui-host>:5006/kiosk?station_id=<STATION_ID>
 ```
 
 using Firefox, Chromium, or Chrome, whichever is installed first in that order.
+On GNOME systems the launcher also disables screen blanking and lock activation for the kiosk user.
+
+Keep secrets in `/etc/slf-trace/panel.env`. The desktop kiosk user reads only
+`/etc/slf-trace/kiosk.env`, which should contain non-secret browser settings such as:
+
+```dotenv
+STATION_ID=3
+KIOSK_BASE_URL=http://api.home.io:5006
+KIOSK_URL=http://api.home.io:5006/kiosk?station_id=3
+```
+
+If you are deliberately reinstalling the same `VERSION` during validation, add
+`FORCE_REINSTALL=true`. Production releases should normally use a new version instead.
+
+### Ubuntu Station Build And Validation Runbook
+
+Build the Ubuntu station artifact on an Ubuntu 24.04 x64 build machine with internet access:
+
+```bash
+cd TrackandTrace
+PATH="$HOME/.local/bin:$PATH" \
+MAMBA_ROOT_PREFIX="$HOME/.local/share/mamba" \
+TARGET=ubuntu24-x64-panel \
+bash deploy/scripts/build-packed-env.sh
+```
+
+If `micromamba` is missing on the build machine, install it first:
+
+```bash
+mkdir -p "$HOME/.local/bin" "$HOME/.local/micromamba"
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest -o /tmp/micromamba.tar.bz2
+tar -xjf /tmp/micromamba.tar.bz2 -C "$HOME/.local/micromamba"
+ln -sfn "$HOME/.local/micromamba/bin/micromamba" "$HOME/.local/bin/micromamba"
+```
+
+Validate the artifact before copying it to a station:
+
+```bash
+cd dist/offline/<version>/ubuntu24-x64-panel
+sha256sum -c SHA256SUMS
+find . -maxdepth 3 -type f | sort
+```
+
+The bundle must include:
+
+- `env.tar.gz`
+- `VERSION`
+- `SHA256SUMS`
+- `alembic.ini`
+- `migrations/`
+- `deploy/install-panel.sh`
+- `deploy/linux/slf-trace-kiosk-browser`
+- `deploy/linux/slf-trace-kiosk.desktop`
+- `deploy/systemd/slf-trace-companion.service`
+- `deploy/templates/panel.env.example`
+- `docs/deployment.md`
+- `docs/security.md`
+
+Copy the artifact to the Ubuntu panel:
+
+```bash
+rsync -az dist/offline/<version>/ubuntu24-x64-panel/ \
+  <station-user>@<station-host>:/tmp/slf-trace-ubuntu24-x64-panel/
+```
+
+Install the release and configure graphical kiosk startup:
+
+```bash
+ssh <station-user>@<station-host>
+sudo INSTALL_KIOSK=true \
+  KIOSK_USER=<desktop-user> \
+  /tmp/slf-trace-ubuntu24-x64-panel/deploy/install-panel.sh \
+  /tmp/slf-trace-ubuntu24-x64-panel
+```
+
+For repeated validation of the same `VERSION`, add `FORCE_REINSTALL=true` to the install command.
+
+Edit `/etc/slf-trace/panel.env` before starting the services. Minimum values:
+
+```dotenv
+APP_ENV=production
+SERVER_URL=http://api.home.io:8000
+STATION_ID=<station-id>
+STATION_TOKEN=<token-if-api-token-enforcement-is-enabled>
+DATABASE_HOST=<postgres-host>
+DATABASE_PORT=5432
+DATABASE_NAME=<database-name>
+DATABASE_USER=<database-user>
+DATABASE_PASSWORD=<database-password>
+COMPANION_STATE_PATH=/opt/slf-trace/state/companion_state.sqlite3
+COMPANION_LOG_PATH=/opt/slf-trace/logs/slf-trace-companion.log
+```
+
+Edit `/etc/slf-trace/kiosk.env` for the desktop browser autostart:
+
+```dotenv
+STATION_ID=<station-id>
+KIOSK_BASE_URL=http://api.home.io:5006
+KIOSK_URL=http://api.home.io:5006/kiosk?station_id=<station-id>
+```
+
+Start and validate services:
+
+```bash
+sudo systemctl restart slf-trace-companion.service
+systemctl is-active slf-trace-companion.service
+systemctl is-enabled slf-trace-companion.service
+systemctl is-enabled slf-trace-ui.service || true
+curl --max-time 20 -fsS "http://api.home.io:5006/kiosk?station_id=<station-id>" >/tmp/kiosk.html
+journalctl -u slf-trace-companion.service --since "2 minutes ago" --no-pager
+```
+
+Reboot validation:
+
+```bash
+sudo reboot
+```
+
+After the station returns:
+
+```bash
+systemctl is-active slf-trace-companion.service display-manager
+systemctl is-active slf-trace-ui.service || true
+curl --max-time 20 -fsS "http://api.home.io:5006/kiosk?station_id=<station-id>" >/tmp/kiosk.html
+pgrep -af "firefox|chromium|chrome|slf-trace-kiosk"
+loginctl list-sessions --no-legend
+journalctl -u slf-trace-companion.service --since "5 minutes ago" --no-pager
+```
+
+Expected result:
+
+- `slf-trace-companion.service` is active after boot
+- `slf-trace-ui.service` is inactive or disabled on the station unless `INSTALL_LOCAL_UI=true`
+- `display-manager` is active
+- central kiosk URL returns HTML with `curl`
+- Firefox, Chromium, or Chrome runs with the kiosk URL
+- companion sends heartbeats to the API
+- scanner startup commands are visible in the companion journal when scanner adapter is enabled
+
+End-to-end station validation:
+
+1. Configure the station in the admin UI with the real station ID, scanner adapter, and measurement adapter.
+2. Restart `slf-trace-companion.service` and confirm the scanner enters working mode.
+3. Scan a Rückmeldenummer in the kiosk.
+4. Confirm the companion receives one measurement request, queries the measurement device, and uploads the value.
+5. Confirm the value appears in the admin measurement history for the selected station.
+
+For a temporary TCP measurement simulator on another machine:
+
+```bash
+nc -lk 0.0.0.0 55169
+```
+
+When the station sends the configured query, enter a plain numeric value followed by Return.
 
 ## Offline Update
 
