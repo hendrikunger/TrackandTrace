@@ -48,6 +48,7 @@ class Station(TimestampMixin, Base):
     workflow_title: Mapped[str | None] = mapped_column(String(120))
     workflow_config: Mapped[dict[str, object] | None] = mapped_column(JSON)
     adapter_config: Mapped[list[dict[str, object]] | None] = mapped_column(JSON)
+    companion_token_hash: Mapped[str | None] = mapped_column(String(80))
     payload_format: Mapped[str | None] = mapped_column(Text)
     timing_notes: Mapped[str | None] = mapped_column(Text)
     network_notes: Mapped[str | None] = mapped_column(Text)

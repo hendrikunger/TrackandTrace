@@ -32,6 +32,7 @@ slf-trace-release-<version>-<target>/
     install-server.sh
     install-panel.ps1
     install-panel.sh
+    linux/
     scripts/
     systemd/
     templates/
@@ -69,6 +70,8 @@ Responsibilities:
 - Unpack or install the packed environment.
 - Copy `alembic.ini`, `migrations/`, and config templates.
 - Create or update `.env`.
+- Set `COMPANION_AUTH_REQUIRED=true` for production unless protected by an
+  equivalent deployment control.
 - Run `alembic upgrade head`.
 - Register startup tasks for:
   - `slf-trace-api`
@@ -85,6 +88,7 @@ Responsibilities:
 
 - Unpack or install the packed environment.
 - Create station `.env`.
+- Add the station-specific `STATION_TOKEN` generated in the admin UI.
 - Register startup tasks for:
   - `slf-trace-ui`
   - `slf-trace-companion`
@@ -100,10 +104,26 @@ Responsibilities:
 
 - Unpack or install the packed environment under `/opt/slf-trace`.
 - Create `/etc/slf-trace/panel.env`.
+- Add the station-specific `STATION_TOKEN` generated in the admin UI.
 - Install `systemd` units:
   - `slf-trace-ui.service`
   - `slf-trace-companion.service`
 - Enable and start both services.
+
+To also configure graphical kiosk boot on a GDM-based Ubuntu desktop, run the installer with:
+
+```bash
+sudo INSTALL_KIOSK=true KIOSK_USER=<desktop-user> deploy/install-panel.sh <release-dir>
+```
+
+This installs `/usr/local/bin/slf-trace-kiosk-browser`, adds an autostart entry for the kiosk user,
+and enables GDM automatic login for that user. The launcher opens:
+
+```text
+http://127.0.0.1:5006/kiosk?station_id=<STATION_ID>
+```
+
+using Firefox, Chromium, or Chrome, whichever is installed first in that order.
 
 ## Offline Update
 
@@ -125,6 +145,69 @@ Responsibilities:
 Database rollback is not automatic. Prefer forward-only migrations in production unless a tested
 downgrade procedure exists for the specific release.
 
+## Test Server Update
+
+The current `api.home.io` test server intentionally uses a git checkout instead of the offline
+release layout. This keeps the pilot machine easy to update while the application is still moving
+quickly.
+
+Use `deploy/update-test-server.sh` on the API VM:
+
+```bash
+cd /opt/slf-trace/src/TrackandTrace
+git status --short
+sudo deploy/update-test-server.sh
+```
+
+On `api.home.io` the same script is installed as:
+
+```bash
+sudo slf-trace-update-server
+```
+
+The script:
+
+- fetches and fast-forwards the configured branch, defaulting to `origin/main`
+- refuses to continue if the server checkout has local changes
+- reinstalls the package into `/opt/slf-trace/env`
+- runs `alembic upgrade head`
+- restarts `slf-trace-api.service` and `slf-trace-ui.service`
+- writes an update log under `/opt/slf-trace/logs/`
+- runs a local API health check
+
+This update route is for the online test server only. Offline production should use versioned
+release bundles so rollback is just a `current` link switch plus service restart.
+
+## Windows Server Build
+
+Build Windows server artifacts on a Windows x64 machine that has internet access and matches the
+production runtime class. Do not build the Windows packed environment from Linux or macOS.
+
+Recommended first-pass build command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\scripts\build-packed-env.ps1 `
+  -Target windows-x64-server
+```
+
+The output is written to:
+
+```text
+dist\offline\<version>\windows-x64-server\
+```
+
+Before accepting the artifact, validate:
+
+- `SHA256SUMS` exists and contains `env.zip`, `alembic.ini`, and `VERSION`
+- `deploy\install-server.ps1` is present in the bundle
+- `deploy\templates\server.env.example` is present
+- `docs\deployment.md` and `docs\security.md` are present
+- `env\Scripts\slf-trace-api.exe` works after unpacking on a clean Windows VM
+- `env\Scripts\alembic.exe -c alembic.ini upgrade head` works against a test database
+
+The Windows production install uses `deploy\install-server.ps1`. It should preserve existing
+configuration, run migrations, and register or update the Windows Scheduled Task for the API.
+
 ## Smoke Checks
 
 Server:
@@ -144,6 +227,7 @@ http://127.0.0.1:5006/kiosk?station_id=1
 Companion:
 
 - Confirm rotating logs are written to `COMPANION_LOG_PATH`.
+- Confirm invalid station tokens are rejected if `COMPANION_AUTH_REQUIRED=true`.
 - Confirm station heartbeat appears in the admin UI.
 - Confirm scanner/adapter health appears in the admin health column.
 

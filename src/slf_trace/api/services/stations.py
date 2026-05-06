@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from slf_trace.api.schemas.stations import StationCreate, StationResponse, StationUpdate
 from slf_trace.models import MeasurementType, Station, StationMeasurementType
+from slf_trace.security import generate_station_token, hash_station_token
 
 STATION_MUTABLE_FIELDS = (
     "location",
@@ -86,6 +87,14 @@ async def get_station_inventory_or_404(session: AsyncSession, station_id: int) -
             detail=f"Station {station_id} was not found.",
         )
     return station
+
+
+async def rotate_station_token(session: AsyncSession, station_id: int) -> str:
+    station = await get_station_inventory_or_404(session, station_id)
+    token = generate_station_token()
+    station.companion_token_hash = hash_station_token(token)
+    await session.flush()
+    return token
 
 
 async def station_by_name(session: AsyncSession, name: str) -> Station | None:
@@ -171,6 +180,7 @@ async def station_to_response(session: AsyncSession, station: Station) -> Statio
         timing_notes=station.timing_notes,
         network_notes=station.network_notes,
         active=station.active,
+        companion_token_configured=bool(station.companion_token_hash),
         measurement_types=[
             {
                 "code": measurement_type.code,

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=SLF Track and Trace Kiosk
+Comment=Open the SLF Track and Trace station kiosk after graphical login
+Exec=/usr/local/bin/slf-trace-kiosk-browser
+Terminal=false
+X-GNOME-Autostart-enabled=true

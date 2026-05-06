@@ -19,3 +19,13 @@ they unpack versioned releases and point `current` at the selected release, so r
 back to the previous release directory.
 
 Production machines still need role-specific `.env` values edited after first install.
+
+## Hybrid Update Policy
+
+- Online test server: use `deploy/update-test-server.sh` against the git checkout on
+  `api.home.io`.
+- Offline production: use versioned release bundles from `deploy/scripts/build-packed-env.ps1` or
+  `deploy/scripts/build-packed-env.sh`, then install with the role-specific install script.
+
+The test-server updater is intentionally not a production rollback system. Production releases keep
+their previous release directories and use the `current` link for rollback.

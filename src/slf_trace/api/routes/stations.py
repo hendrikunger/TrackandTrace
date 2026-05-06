@@ -8,6 +8,7 @@ from slf_trace.api.schemas.admin import (
     StationEventSummary,
     StationMeasurementTypeUpdate,
     StationSummary,
+    StationTokenResponse,
 )
 from slf_trace.api.schemas.stations import StationCreate, StationResponse, StationUpdate
 from slf_trace.api.services.admin import (
@@ -21,6 +22,7 @@ from slf_trace.api.services.admin import (
 )
 from slf_trace.api.services.stations import (
     create_station_inventory,
+    rotate_station_token,
     update_station_inventory,
 )
 from slf_trace.db import get_session
@@ -85,3 +87,12 @@ async def put_station_measurement_types(
         station_id,
         payload.measurement_type_codes,
     )
+
+
+@router.post("/{station_id}/token", response_model=StationTokenResponse)
+async def post_station_token(
+    station_id: int,
+    session: SessionDep,
+) -> StationTokenResponse:
+    token = await rotate_station_token(session, station_id)
+    return StationTokenResponse(station_id=station_id, token=token)

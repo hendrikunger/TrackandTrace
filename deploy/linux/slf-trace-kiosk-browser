@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="${ENV_FILE:-/etc/slf-trace/panel.env}"
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+UI_HOST="${UI_HOST:-127.0.0.1}"
+UI_PORT="${UI_PORT:-5006}"
+STATION_ID="${STATION_ID:-1}"
+KIOSK_URL="${KIOSK_URL:-http://${UI_HOST}:${UI_PORT}/kiosk?station_id=${STATION_ID}}"
+
+wait_for_ui() {
+  for _ in $(seq 1 120); do
+    if curl -fsS "http://${UI_HOST}:${UI_PORT}/kiosk?station_id=${STATION_ID}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_ui || true
+
+if command -v chromium >/dev/null 2>&1; then
+  exec chromium --kiosk --no-first-run --disable-infobars "$KIOSK_URL"
+fi
+
+if command -v chromium-browser >/dev/null 2>&1; then
+  exec chromium-browser --kiosk --no-first-run --disable-infobars "$KIOSK_URL"
+fi
+
+if command -v google-chrome >/dev/null 2>&1; then
+  exec google-chrome --kiosk --no-first-run --disable-infobars "$KIOSK_URL"
+fi
+
+if command -v firefox >/dev/null 2>&1; then
+  exec firefox --kiosk "$KIOSK_URL"
+fi
+
+echo "No supported kiosk browser found. Install Firefox, Chromium, or Chrome." >&2
+exit 1

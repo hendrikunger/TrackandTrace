@@ -41,6 +41,9 @@ Copy-Item deploy/install-server.ps1 "$OutDir/deploy/"
 Copy-Item deploy/install-panel.ps1 "$OutDir/deploy/"
 Copy-Item -Recurse deploy/templates "$OutDir/deploy/"
 Copy-Item docs/deployment.md "$OutDir/docs/"
+if (Test-Path docs/security.md) {
+    Copy-Item docs/security.md "$OutDir/docs/"
+}
 Set-Content -Path "$OutDir/VERSION" -Value $Version
 
 Push-Location $OutDir

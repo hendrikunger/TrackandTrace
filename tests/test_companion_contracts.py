@@ -13,7 +13,9 @@ from slf_trace.api.schemas.companion import (
     StationConfigResponse,
     StationEventRequest,
 )
+from slf_trace.config import Settings
 from slf_trace.db import get_session
+from slf_trace.security import hash_station_token
 
 
 async def _fake_session():
@@ -106,6 +108,84 @@ async def test_measurement_route_validates_body_before_handler() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_companion_route_rejects_missing_station_token_when_required(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        companion_routes,
+        "get_settings",
+        lambda: Settings(companion_auth_required=True),
+    )
+    app.dependency_overrides[get_session] = _fake_session
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/companion/heartbeats",
+                json={"station_id": 1, "status": "online"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_companion_route_accepts_valid_station_token(monkeypatch) -> None:
+    token = "station-secret"
+    published = []
+
+    async def get_station_or_404(session, station_id):
+        return SimpleNamespace(
+            id=station_id,
+            companion_token_hash=hash_station_token(token),
+        )
+
+    async def record_heartbeat(session, payload):
+        return SimpleNamespace(
+            id=7,
+            station_id=payload.station_id,
+            status=payload.status,
+            hostname=None,
+            companion_version=None,
+            adapter_status=None,
+        )
+
+    async def publish_event(event_type, station_id, payload):
+        published.append((event_type, station_id, payload))
+
+    monkeypatch.setattr(
+        companion_routes,
+        "get_settings",
+        lambda: Settings(companion_auth_required=True),
+    )
+    monkeypatch.setattr(companion_routes, "get_station_or_404", get_station_or_404)
+    monkeypatch.setattr(companion_routes, "record_heartbeat", record_heartbeat)
+    monkeypatch.setattr(companion_routes, "publish_event", publish_event)
+    app.dependency_overrides[get_session] = _fake_session
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/companion/heartbeats",
+                headers={
+                    "X-Station-ID": "1",
+                    "X-Station-Token": token,
+                },
+                json={"station_id": 1, "status": "online"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert published[0][0] == "station.heartbeat"
 
 
 def test_measurement_requires_at_least_one_value() -> None:

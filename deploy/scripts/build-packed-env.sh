@@ -1,26 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${VERSION:-$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')}"
+PYTHON_BOOTSTRAP="${PYTHON_BOOTSTRAP:-$(command -v python || command -v python3)}"
+VERSION="${VERSION:-$("$PYTHON_BOOTSTRAP" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')}"
 TARGET="${TARGET:-ubuntu24-x64-panel}"
 ENV_NAME="${ENV_NAME:-slf-trace-${VERSION}-${TARGET}}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 OUT_DIR="${OUT_DIR:-dist/offline/${VERSION}/${TARGET}}"
+BOOTSTRAP_ENV="${BOOTSTRAP_ENV:-.build/packed-env-bootstrap}"
 
-rm -rf build dist/*.whl "$OUT_DIR"
+rm -rf build dist/*.whl "$OUT_DIR" "$BOOTSTRAP_ENV"
 mkdir -p "$OUT_DIR"
 
-python -m pip install --upgrade build conda-pack
-python -m build --wheel
+"$PYTHON_BOOTSTRAP" -m venv "$BOOTSTRAP_ENV"
+"$BOOTSTRAP_ENV/bin/python" -m pip install --upgrade pip build conda-pack
+"$BOOTSTRAP_ENV/bin/python" -m build --wheel
 
 if command -v micromamba >/dev/null 2>&1; then
+  MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.local/share/mamba}"
+  export MAMBA_ROOT_PREFIX
+  micromamba env remove -y -n "$ENV_NAME" >/dev/null 2>&1 || true
   micromamba create -y -n "$ENV_NAME" "python=${PYTHON_VERSION}" pip
   eval "$(micromamba shell hook --shell bash)"
   micromamba activate "$ENV_NAME"
+  ENV_PREFIX="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME"
 elif command -v mamba >/dev/null 2>&1; then
+  mamba env remove -y -n "$ENV_NAME" >/dev/null 2>&1 || true
   mamba create -y -n "$ENV_NAME" "python=${PYTHON_VERSION}" pip
   eval "$(conda shell.bash hook)"
   conda activate "$ENV_NAME"
+  ENV_PREFIX="$CONDA_PREFIX"
 else
   echo "micromamba or mamba is required for packed env builds." >&2
   exit 1
@@ -41,13 +50,15 @@ print("companion", CompanionRuntime.__name__)
 print("ui", build_admin_app.__name__)
 PY
 
-conda-pack -n "$ENV_NAME" -o "$OUT_DIR/env.tar.gz" --force
+"$BOOTSTRAP_ENV/bin/conda-pack" -p "$ENV_PREFIX" -o "$OUT_DIR/env.tar.gz" --force
 
 cp alembic.ini "$OUT_DIR/"
 cp -R migrations "$OUT_DIR/"
 mkdir -p "$OUT_DIR/deploy" "$OUT_DIR/docs"
 cp -R deploy/install-panel.sh deploy/install-server.sh deploy/templates deploy/systemd "$OUT_DIR/deploy/"
+cp -R deploy/linux "$OUT_DIR/deploy/"
 cp docs/deployment.md "$OUT_DIR/docs/"
+cp docs/security.md "$OUT_DIR/docs/" 2>/dev/null || true
 printf '%s\n' "$VERSION" > "$OUT_DIR/VERSION"
 
 (

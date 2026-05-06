@@ -30,6 +30,7 @@ from slf_trace.models import (
     Station,
     StationMeasurementType,
 )
+from slf_trace.security import generate_station_token, hash_station_token
 from slf_trace.ui.branding import load_logo_svg
 
 pn.extension("tabulator")
@@ -178,7 +179,19 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     station_companion_status = pn.pane.Markdown("", width=190)
     station_host_status = pn.pane.Markdown("", width=220)
     station_location_status = pn.pane.Markdown("", width=220)
-    adapter_detail = pn.pane.JSON({}, name="Adapter State", depth=3, height=260)
+    adapter_detail_message = pn.pane.Markdown("Select a station to view adapter state.")
+    adapter_detail_table = pn.widgets.Tabulator(
+        value=pd.DataFrame(),
+        editors={
+            "adapter": None,
+            "state": None,
+            "last_event": None,
+            "error": None,
+        },
+        height=160,
+        sizing_mode="stretch_width",
+        visible=False,
+    )
     diagnostics_table = pn.widgets.Tabulator(
         value=pd.DataFrame(),
         editors={
@@ -220,6 +233,19 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="stretch_width",
     )
     active = pn.widgets.Checkbox(name="Active", value=True)
+    station_token_status = pn.pane.Markdown("Companion token: `not configured`")
+    station_token_button = pn.widgets.Button(
+        name="Generate new station token",
+        button_type="primary",
+        width=220,
+    )
+    station_token_output = pn.widgets.TextAreaInput(
+        name="New station token (shown once)",
+        value="",
+        height=90,
+        sizing_mode="stretch_width",
+        visible=False,
+    )
     measurement_types = pn.widgets.MultiChoice(
         name="Allowed measurement types",
         options=[],
@@ -397,7 +423,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         disabled=True,
     )
     adapter_remove_button = pn.widgets.Button(name="Remove", button_type="danger", width=110)
-    adapter_preview = pn.pane.JSON([], name="Adapter config", depth=4, height=220)
+    adapter_preview = pn.pane.JSON(
+        [],
+        name="Adapter config",
+        depth=4,
+        height=220,
+        sizing_mode="stretch_width",
+    )
     adapter_message = pn.pane.Alert("", alert_type="info", visible=False)
 
     refresh_button = pn.widgets.Button(name="Refresh", button_type="primary")
@@ -421,7 +453,17 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         value=0,
         width=260,
     )
-    lookup_button = pn.widgets.Button(name="Lookup", button_type="primary")
+    lookup_button = pn.widgets.Button(
+        name="Lookup",
+        button_type="primary",
+        margin=0,
+    )
+    lookup_button_stack = pn.Column(
+        pn.pane.HTML("&nbsp;", height=22, margin=0),
+        lookup_button,
+        margin=0,
+        width=120,
+    )
     history_table = pn.widgets.Tabulator(
         value=pd.DataFrame(),
         editors={
@@ -511,6 +553,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         _: object | None = None,
         *,
         select_station_id: int | None = None,
+        clear_message: bool = True,
     ) -> None:
         nonlocal station_rows
         try:
@@ -551,7 +594,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             ].tolist()
             if matching_rows:
                 station_table.selection = [matching_rows[0]]
-        station_message.visible = False
+                station = next(
+                    (row for row in station_rows if row["id"] == select_station_id),
+                    None,
+                )
+                if station is not None:
+                    update_station_status_bar(station)
+        if clear_message:
+            station_message.visible = False
 
     def fill_station_form(station: dict[str, Any]) -> None:
         nonlocal loading_station_form
@@ -588,7 +638,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         station_location_status.object = (
             f"Latest issue: `{station['health_message'] or station['location'] or '-'}`"
         )
+        token_text = "configured" if station.get("companion_token_configured") else "not configured"
+        station_token_status.object = f"Companion token: `{token_text}`"
         diagnostics_table.value = pd.DataFrame(station["recent_events"])
+        adapter_rows = adapter_status_rows(station.get("adapter_status"))
+        adapter_detail_table.value = pd.DataFrame(adapter_rows)
+        adapter_detail_table.visible = bool(adapter_rows)
+        adapter_detail_message.object = (
+            "" if adapter_rows else "No adapter state reported yet."
+        )
+        adapter_detail_message.visible = not bool(adapter_rows)
 
     def clear_station_form() -> None:
         nonlocal loading_station_form
@@ -627,7 +686,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         )
         fill_station_form(station)
         update_station_status_bar(station)
-        adapter_detail.object = station["adapter_status"] or {}
         render_adapter_configs()
 
     def autosave_config(_: object | None = None) -> None:
@@ -690,7 +748,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         station_companion_status.object = "Companion: `unknown`"
         station_host_status.object = "Hostname: `-`"
         station_location_status.object = "Location: `-`"
-        adapter_detail.object = {}
+        station_token_status.object = "Companion token: `not configured`"
+        station_token_output.visible = False
+        station_token_output.value = ""
+        adapter_detail_table.value = pd.DataFrame()
+        adapter_detail_table.visible = False
+        adapter_detail_message.object = "Select a station to view adapter state."
+        adapter_detail_message.visible = True
         diagnostics_table.value = pd.DataFrame()
         set_message(station_message, "Enter station details, then save.")
 
@@ -1008,6 +1072,34 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         adapter_table.selection = []
         render_adapter_configs()
         save_adapter_configs()
+
+    def generate_selected_station_token(_: object | None = None) -> None:
+        if selected_station_id is None:
+            set_message(station_message, "Select a station first.", "warning")
+            return
+
+        token = generate_station_token()
+        try:
+            with session_scope(settings) as session:
+                station = session.get(Station, selected_station_id)
+                if station is None:
+                    raise ValueError(f"Station {selected_station_id} was not found.")
+                station.companion_token_hash = hash_station_token(token)
+        except Exception as exc:  # noqa: BLE001
+            set_message(station_message, f"Could not generate station token: {exc}", "danger")
+            return
+
+        station = next(row for row in station_rows if row["id"] == selected_station_id)
+        station["companion_token_configured"] = True
+        station_token_status.object = "Companion token: `configured`"
+        station_token_output.value = f"STATION_TOKEN={token}"
+        station_token_output.visible = True
+        set_message(
+            station_message,
+            "New token generated. Copy it into the station service environment now; "
+            "it will not be shown again after refresh.",
+            "success",
+        )
 
     def update_selected_station_row(values: dict[str, Any]) -> None:
         if selected_station_id is None:
@@ -1479,6 +1571,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             return
         check_kiosk_measurement()
 
+    def auto_refresh_stations() -> None:
+        if kiosk or creating_station:
+            return
+        refresh_stations(
+            select_station_id=selected_station_id,
+            clear_message=False,
+        )
+
     def update_kiosk_status(*, step: int, message: str) -> None:
         labels = [
             ("1", "Barcode"),
@@ -1514,6 +1614,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     cancel_station_button.on_click(cancel_new_station)
     adapter_add_button.on_click(add_adapter)
     adapter_remove_button.on_click(remove_adapter)
+    station_token_button.on_click(generate_selected_station_token)
     lookup_button.on_click(lookup_measurements)
     kiosk_refresh_button.on_click(refresh_stations)
     kiosk_barcode_button.on_click(accept_kiosk_barcode)
@@ -1524,6 +1625,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     if kiosk:
         pn.state.add_periodic_callback(poll_kiosk_scanner_scan, period=1000)
         pn.state.add_periodic_callback(poll_kiosk_measurement, period=1000)
+    else:
+        pn.state.add_periodic_callback(auto_refresh_stations, period=5000)
 
     for field_widget in (
         name,
@@ -1586,16 +1689,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "padding": "8px 12px",
         },
     )
-    adapter_state_panel = pn.Accordion(
-        ("Adapter state", adapter_detail),
-        active=[],
-        width=420,
-    )
-    diagnostics_panel = pn.Accordion(
-        ("Recent diagnostics", diagnostics_table),
-        active=[],
-        width=420,
-    )
     station_config_form = pn.Column(
         pn.Tabs(
             (
@@ -1608,6 +1701,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                         ncols=2,
                         align="start",
                     ),
+                    pn.pane.Markdown("### Companion API token"),
+                    station_token_status,
+                    station_token_button,
+                    station_token_output,
                     sizing_mode="stretch_width",
                 ),
             ),
@@ -1643,7 +1740,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         ),
         station_message,
         align="start",
-        width=860,
+        sizing_mode="stretch_width",
     )
 
     adapter_common_section = pn.Column(
@@ -1727,16 +1824,40 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     adapter_type.param.watch(update_adapter_type_sections, "value")
 
     adapter_config_form = pn.Column(
+        pn.pane.Markdown("### Configuration"),
         pn.Row(adapter_add_button, adapter_remove_button),
         adapter_table,
-        pn.pane.Markdown("### Adapter settings"),
+        pn.pane.Markdown("#### Adapter settings"),
         adapter_common_section,
         smb_adapter_section,
         tcp_adapter_section,
         serial_adapter_section,
         adapter_message,
-        pn.Accordion(("Effective adapter JSON", adapter_preview), active=[]),
+        pn.Accordion(
+            ("Effective adapter JSON", adapter_preview),
+            active=[],
+            sizing_mode="stretch_width",
+        ),
         sizing_mode="stretch_width",
+    )
+    adapter_runtime_section = pn.Column(
+        pn.pane.Markdown("### Runtime state"),
+        adapter_detail_message,
+        adapter_detail_table,
+        pn.pane.Markdown("### Recent diagnostics"),
+        diagnostics_table,
+        sizing_mode="stretch_width",
+    )
+    station_adapters_section = pn.Column(
+        pn.pane.Markdown("## Adapters"),
+        adapter_runtime_section,
+        adapter_config_form,
+        sizing_mode="stretch_width",
+        styles={
+            "border-top": "1px solid #d0d7de",
+            "padding-top": "18px",
+            "margin-top": "8px",
+        },
     )
     kiosk_panel = pn.Column(
         pn.Row(
@@ -1793,14 +1914,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     ),
                     station_table,
                     station_status_bar,
-                    pn.Row(
-                        station_config_form,
-                        pn.Column(adapter_state_panel, diagnostics_panel),
-                        sizing_mode="stretch_width",
-                        align="start",
-                    ),
-                    pn.pane.Markdown("## Adapter configuration"),
-                    adapter_config_form,
+                    station_config_form,
+                    station_adapters_section,
                     sizing_mode="stretch_width",
                 ),
             ),
@@ -1810,9 +1925,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     pn.Row(
                         rueckmeldenummer,
                         history_station,
-                        lookup_button,
+                        lookup_button_stack,
                         sizing_mode="stretch_width",
-                        align="end",
+                        align="start",
                     ),
                     lookup_message,
                     history_table,
@@ -1918,6 +2033,7 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                 "companion_version": latest_heartbeat.companion_version
                 if latest_heartbeat
                 else None,
+                "companion_token_configured": bool(station.companion_token_hash),
                 "adapter_status": latest_heartbeat.adapter_status
                 if latest_heartbeat
                 else None,
@@ -2280,6 +2396,28 @@ def values_markdown(values: list[dict[str, Any]]) -> str:
         label = value["label"] or value["type"]
         lines.append(f"| {label} | {value['value']} {value['unit']} |")
     return "\n".join(lines)
+
+
+def adapter_status_rows(adapter_status: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not adapter_status:
+        return []
+
+    adapters = adapter_status.get("adapters")
+    if not isinstance(adapters, dict) or not adapters:
+        return []
+
+    rows = []
+    for name, raw_status in sorted(adapters.items()):
+        status = raw_status if isinstance(raw_status, dict) else {}
+        rows.append(
+            {
+                "adapter": str(name),
+                "state": str(status.get("state") or "-"),
+                "last_event": str(status.get("last_event_at") or "-"),
+                "error": str(status.get("last_error") or "-"),
+            }
+        )
+    return rows
 
 
 def raw_payload_markdown(detail: dict[str, Any]) -> str:

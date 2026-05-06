@@ -57,4 +57,5 @@ class StationResponse(BaseModel):
     timing_notes: str | None = None
     network_notes: str | None = None
     active: bool
+    companion_token_configured: bool = False
     measurement_types: list[MeasurementTypeConfig] = Field(default_factory=list)

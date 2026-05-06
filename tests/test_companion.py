@@ -82,11 +82,13 @@ def test_config_from_settings_parses_station_id() -> None:
             station_id="42",
             server_url="http://server",
             companion_state_path="state.sqlite3",
+            station_token="station-secret",
         )
     )
 
     assert config.station_id == 42
     assert config.server_url == "http://server"
+    assert config.station_token == "station-secret"
 
 
 def test_outbox_persists_events(tmp_path) -> None:
@@ -265,6 +267,25 @@ async def test_runtime_barcode_scan_does_not_request_measurement(tmp_path) -> No
         )
     )
 
+    assert runtime.latest_rueckmeldenummer is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_syncs_measurement_request_cursor_without_accepting_old_requests(
+    tmp_path,
+) -> None:
+    client = FakeClient()
+    client.measurement_requests.extend(
+        [
+            {"request_id": 3, "rueckmeldenummer": "RM-OLD-1"},
+            {"request_id": 4, "rueckmeldenummer": "RM-OLD-2"},
+        ]
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+
+    await runtime.sync_measurement_request_cursor()
+
+    assert runtime.last_measurement_request_id == 4
     assert runtime.latest_rueckmeldenummer is None
 
 

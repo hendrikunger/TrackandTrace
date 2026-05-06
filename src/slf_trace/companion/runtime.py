@@ -36,6 +36,7 @@ class CompanionRuntimeConfig:
     state_path: str
     heartbeat_interval_seconds: float
     outbox_retry_interval_seconds: float
+    station_token: str | None = None
 
 
 class CompanionRuntime:
@@ -48,7 +49,11 @@ class CompanionRuntime:
         adapters: list[MeasurementAdapter] | None = None,
     ) -> None:
         self.config = config
-        self.client = client or CompanionClient(config.server_url)
+        self.client = client or CompanionClient(
+            config.server_url,
+            station_id=config.station_id,
+            station_token=config.station_token,
+        )
         self.outbox = outbox or Outbox(config.state_path)
         self.adapters = adapters or []
         self.station_config: dict[str, Any] | None = None
@@ -175,6 +180,7 @@ class CompanionRuntime:
     async def run_forever(self) -> None:
         await self.fetch_station_config()
         self.configure_adapters_from_station_config()
+        await self.sync_measurement_request_cursor()
         await self.send_heartbeat(status="starting")
 
         tasks = [
@@ -226,6 +232,24 @@ class CompanionRuntime:
         while True:
             await self.fetch_measurement_request_once()
             await asyncio.sleep(0.5)
+
+    async def sync_measurement_request_cursor(self, *, max_requests: int = 1000) -> None:
+        for _ in range(max_requests):
+            request = await self.client.fetch_measurement_request(
+                self.config.station_id,
+                self.last_measurement_request_id,
+            )
+            request_id = request.get("request_id")
+            if request_id is None:
+                return
+            self.last_measurement_request_id = int(request_id)
+        logger.warning(
+            "Stopped measurement request cursor sync at limit",
+            extra={
+                "station_id": self.config.station_id,
+                "request_id": self.last_measurement_request_id,
+            },
+        )
 
     async def fetch_measurement_request_once(self) -> bool:
         request = await self.client.fetch_measurement_request(
@@ -285,6 +309,7 @@ def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeCo
         state_path=settings.companion_state_path,
         heartbeat_interval_seconds=settings.companion_heartbeat_interval_seconds,
         outbox_retry_interval_seconds=settings.companion_outbox_retry_interval_seconds,
+        station_token=settings.station_token,
     )
 
 

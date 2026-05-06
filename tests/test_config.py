@@ -21,3 +21,5 @@ def test_ui_development_defaults() -> None:
     assert settings.ui_host == "127.0.0.1"
     assert settings.ui_port == 5006
     assert settings.ui_autoreload is True
+    assert settings.companion_auth_required is False
+    assert settings.station_token is None

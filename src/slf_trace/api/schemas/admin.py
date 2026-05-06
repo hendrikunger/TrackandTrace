@@ -55,6 +55,7 @@ class StationSummary(BaseModel):
     last_event_message: str | None = None
     hostname: str | None = None
     companion_version: str | None = None
+    companion_token_configured: bool = False
     adapter_status: dict[str, Any] | None = None
     measurement_types: list[StationMeasurementTypeAssignment] = Field(default_factory=list)
 
@@ -77,6 +78,11 @@ class StationConfigUpdate(BaseModel):
 
 class StationMeasurementTypeUpdate(BaseModel):
     measurement_type_codes: list[str] = Field(default_factory=list)
+
+
+class StationTokenResponse(BaseModel):
+    station_id: int
+    token: str
 
 
 class MeasurementValueSummary(BaseModel):

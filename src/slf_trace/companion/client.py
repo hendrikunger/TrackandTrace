@@ -4,8 +4,17 @@ import httpx
 
 
 class CompanionClient:
-    def __init__(self, server_url: str, timeout_seconds: float = 10.0) -> None:
+    def __init__(
+        self,
+        server_url: str,
+        *,
+        station_id: int | None = None,
+        station_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> None:
         self.server_url = server_url.rstrip("/")
+        self.station_id = station_id
+        self.station_token = station_token
         self.timeout_seconds = timeout_seconds
 
     async def fetch_station_config(self, station_id: int) -> dict[str, Any]:
@@ -38,6 +47,19 @@ class CompanionClient:
             base_url=self.server_url,
             timeout=self.timeout_seconds,
         ) as client:
-            response = await client.request(method, path, json=json)
+            response = await client.request(
+                method,
+                path,
+                json=json,
+                headers=self._headers(),
+            )
             response.raise_for_status()
             return response.json()
+
+    def _headers(self) -> dict[str, str]:
+        if self.station_id is None or not self.station_token:
+            return {}
+        return {
+            "X-Station-ID": str(self.station_id),
+            "X-Station-Token": self.station_token,
+        }

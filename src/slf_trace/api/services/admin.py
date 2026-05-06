@@ -382,6 +382,7 @@ def _station_summary(
         last_event_message=latest_event.message if latest_event is not None else None,
         hostname=heartbeat.hostname if heartbeat is not None else None,
         companion_version=heartbeat.companion_version if heartbeat is not None else None,
+        companion_token_configured=bool(station.companion_token_hash),
         adapter_status=heartbeat.adapter_status if heartbeat is not None else None,
         measurement_types=[
             StationMeasurementTypeAssignment(

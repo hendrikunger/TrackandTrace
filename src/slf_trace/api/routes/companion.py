@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from slf_trace.api.events import publish_event
@@ -31,14 +31,54 @@ from slf_trace.api.services.companion import (
     record_raw_payload,
     record_station_event,
 )
+from slf_trace.config import get_settings
 from slf_trace.db import get_session
+from slf_trace.security import verify_station_token
 
 router = APIRouter(prefix="/companion", tags=["companion"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+StationIdHeader = Annotated[int | None, Header(alias="X-Station-ID")]
+StationTokenHeader = Annotated[str | None, Header(alias="X-Station-Token")]
+
+
+async def require_companion_auth(
+    session: AsyncSession,
+    *,
+    request_station_id: int,
+    header_station_id: int | None,
+    header_token: str | None,
+) -> None:
+    settings = get_settings()
+    if not settings.companion_auth_required:
+        return
+
+    if header_station_id != request_station_id or not header_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid station credentials.",
+        )
+
+    station = await get_station_or_404(session, request_station_id)
+    if not verify_station_token(header_token, station.companion_token_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid station credentials.",
+        )
 
 
 @router.get("/stations/{station_id}/config", response_model=StationConfigResponse)
-async def get_station_config(station_id: int, session: SessionDep) -> StationConfigResponse:
+async def get_station_config(
+    station_id: int,
+    session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
+) -> StationConfigResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     station = await get_station_or_404(session, station_id)
     measurement_types = await get_station_measurement_types(session, station_id)
     return StationConfigResponse(
@@ -72,7 +112,15 @@ async def get_measurement_request(
     station_id: int,
     after_id: int,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> MeasurementRequestCommandResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     request = await get_next_measurement_request(session, station_id, after_id)
     if request is None:
         return MeasurementRequestCommandResponse()
@@ -86,7 +134,15 @@ async def get_measurement_request(
 async def post_heartbeat(
     payload: StationHeartbeatRequest,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> StationHeartbeatResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=payload.station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     heartbeat = await record_heartbeat(session, payload)
     await publish_event(
         "station.heartbeat",
@@ -109,7 +165,15 @@ async def post_heartbeat(
 async def post_station_event(
     payload: StationEventRequest,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> StationEventResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=payload.station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     event = await record_station_event(session, payload)
     await publish_event(
         "station.event",
@@ -132,7 +196,15 @@ async def post_station_event(
 async def post_barcode_scan(
     payload: BarcodeScanRequest,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> BarcodeScanResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=payload.station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     part, created = await record_barcode_scan(session, payload)
     await publish_event(
         "barcode.scan",
@@ -156,7 +228,15 @@ async def post_barcode_scan(
 async def post_raw_payload(
     payload: RawPayloadRequest,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> RawPayloadResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=payload.station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     raw_payload = await record_raw_payload(session, payload)
     await publish_event(
         "raw_payload.received",
@@ -177,7 +257,15 @@ async def post_raw_payload(
 async def post_measurement(
     payload: MeasurementRequest,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> MeasurementResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=payload.station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     measurement, duplicate = await record_measurement(session, payload)
     await publish_event(
         "measurement.captured",
@@ -202,7 +290,15 @@ async def post_measurement(
 async def post_parsed_measurement(
     payload: ParsedMeasurementRequest,
     session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
 ) -> MeasurementResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=payload.station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
     measurement, duplicate = await parse_and_record_measurement(session, payload)
     await publish_event(
         "measurement.captured",
