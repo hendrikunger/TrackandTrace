@@ -42,7 +42,9 @@ if [[ ! -x "$ENV_DIR/bin/python" ]]; then
 fi
 
 run_as_service_user() {
-  sudo -u "$SERVICE_USER" --preserve-env=PATH "$@"
+  sudo -u "$SERVICE_USER" \
+    --preserve-env=PATH,APP_ENV,APP_HOST,APP_PORT,UI_HOST,UI_PORT,UI_AUTORELOAD,DATABASE_HOST,DATABASE_PORT,DATABASE_NAME,DATABASE_USER,DATABASE_PASSWORD,SERVER_URL,COMPANION_AUTH_REQUIRED \
+    "$@"
 }
 
 cd "$APP_DIR"
