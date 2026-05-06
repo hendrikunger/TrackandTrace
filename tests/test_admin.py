@@ -58,6 +58,22 @@ def test_station_health_reports_latest_problem_event_as_degraded() -> None:
     assert message == "parser.failure: Unknown measurement type."
 
 
+def test_station_health_does_not_degrade_for_warning_diagnostic() -> None:
+    state, message = station_health(
+        online=True,
+        status_value="online",
+        adapter_status={"adapters": {"tcp": {"state": "online"}}},
+        latest_event=SimpleNamespace(
+            severity="warning",
+            event_type="measurement.partial",
+            message="Measurement request completed with missing adapter values.",
+        ),
+    )
+
+    assert state == "online"
+    assert message is None
+
+
 def test_adapter_problem_message_ignores_online_adapters() -> None:
     assert (
         adapter_problem_message({"adapters": {"tcp": {"state": "online"}}})

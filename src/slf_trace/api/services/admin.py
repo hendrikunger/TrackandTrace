@@ -31,7 +31,7 @@ from slf_trace.models import (
 STATION_ONLINE_WINDOW = timedelta(minutes=5)
 ONLINE_HEARTBEAT_STATUSES = {"online", "starting", "degraded"}
 PROBLEM_ADAPTER_STATES = {"degraded", "offline"}
-PROBLEM_EVENT_SEVERITIES = {"warning", "error", "critical"}
+PROBLEM_EVENT_SEVERITIES = {"error", "critical"}
 
 
 def is_station_online(
