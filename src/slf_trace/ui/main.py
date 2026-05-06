@@ -2054,6 +2054,15 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
             latest_event,
             latest_measurement_at.get(station.id),
         )
+        current_events = [
+            event
+            for event in sorted(
+                station.events,
+                key=lambda item: item.occurred_at,
+                reverse=True,
+            )
+            if current_station_event(event, latest_measurement_at.get(station.id)) is not None
+        ][:20]
         status = latest_heartbeat.status if latest_heartbeat else None
         received_at = latest_heartbeat.received_at if latest_heartbeat else None
         online = is_station_online(status, received_at)
@@ -2100,11 +2109,7 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                         "event_type": event.event_type,
                         "message": event.message,
                     }
-                    for event in sorted(
-                        station.events,
-                        key=lambda item: item.occurred_at,
-                        reverse=True,
-                    )[:20]
+                    for event in current_events
                 ],
                 "hostname": latest_heartbeat.hostname if latest_heartbeat else None,
                 "companion_version": latest_heartbeat.companion_version
