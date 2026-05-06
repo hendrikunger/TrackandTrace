@@ -1,7 +1,7 @@
 param(
     [string]$InstallRoot = "C:\SLF\TrackTrace",
     [string]$ReleaseSource = ".",
-    [switch]$InstallAdminUi
+    [switch]$SkipUi
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,7 +82,7 @@ Register-ScheduledTask `
     -Principal $ApiPrincipal `
     -Force | Out-Null
 
-if ($InstallAdminUi) {
+if (-not $SkipUi) {
     $UiAction = New-ScheduledTaskAction `
         -Execute $Python `
         -Argument '-c "from slf_trace.ui.main import run; run()"' `
@@ -101,5 +101,11 @@ if ($CreatedTemplateEnv) {
 }
 else {
     Write-Host "Configuration preserved and migrations completed. Start tasks from Task Scheduler or reboot."
+}
+if ($SkipUi) {
+    Write-Host "Central UI task was skipped because -SkipUi was set."
+}
+else {
+    Write-Host "Central UI task is installed as 'SLF Track Trace UI'."
 }
 Write-Host "Rollback: stop tasks, point $CurrentDir to the previous release under $InstallRoot\releases, then restart tasks."

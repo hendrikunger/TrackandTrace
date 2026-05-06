@@ -17,11 +17,11 @@ different station.
 
 ## Windows 11
 
-Start the Panel service or scheduled task first, then launch Microsoft Edge in kiosk mode for the
-station user:
+Open the central server UI in Microsoft Edge kiosk mode for the station user. Do not start a local
+Panel UI on production stations.
 
 ```powershell
-$Url = "http://127.0.0.1:5006/kiosk?station_id=1"
+$Url = "http://<server-host>:5006/kiosk?station_id=1"
 Start-Process "msedge.exe" -ArgumentList "--kiosk $Url --edge-kiosk-type=fullscreen --no-first-run"
 ```
 
@@ -30,11 +30,12 @@ Use Windows Assigned Access when the panel should be locked to Edge.
 
 ## Ubuntu 24.04
 
-Start `slf-trace-ui.service`, then launch Chromium for the kiosk session:
+Launch the central server UI for the kiosk session. The station runs `slf-trace-companion.service`
+locally, but does not run `slf-trace-ui.service` in production.
 
 ```bash
 chromium --kiosk --no-first-run --disable-infobars \
-  "http://127.0.0.1:5006/kiosk?station_id=1"
+  "http://<server-host>:5006/kiosk?station_id=1"
 ```
 
 For unattended startup, add the command to the dedicated user's desktop autostart entry, for
@@ -44,9 +45,9 @@ example `~/.config/autostart/slf-trace-kiosk.desktop`:
 [Desktop Entry]
 Type=Application
 Name=SLF Trace Kiosk
-Exec=chromium --kiosk --no-first-run --disable-infobars http://127.0.0.1:5006/kiosk?station_id=1
+Exec=chromium --kiosk --no-first-run --disable-infobars http://<server-host>:5006/kiosk?station_id=1
 X-GNOME-Autostart-enabled=true
 ```
 
-Keep admin access separate by opening `http://127.0.0.1:5006/app` manually with a keyboard/admin
-session.
+Keep admin access separate by opening `http://<server-host>:5006/app` manually with a
+keyboard/admin session.

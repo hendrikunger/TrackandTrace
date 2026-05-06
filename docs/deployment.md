@@ -78,7 +78,7 @@ Responsibilities:
   `.env` and runs migration automatically.
 - Register startup tasks for:
   - `slf-trace-api`
-  - optionally `slf-trace-ui` for admin access on the server
+  - `slf-trace-ui` for the central admin and kiosk UI
 
 PostgreSQL is expected to be installed and managed separately as a Windows service. The `.env`
 database settings must point at that PostgreSQL instance.
@@ -96,7 +96,8 @@ Responsibilities:
 - Configure the browser/kiosk session to open the central UI.
 
 The Windows panel can use built-in Scheduled Tasks, avoiding third-party service wrappers in the
-offline environment.
+offline environment. The normal production station does not run the Panel UI locally. Use
+`-InstallLocalUi` only for temporary diagnostics or fallback operation.
 
 ## Ubuntu 24.04 Station Install
 
@@ -381,7 +382,8 @@ Before accepting the artifact, validate:
 - `env\Scripts\alembic.exe -c alembic.ini upgrade head` works against a test database
 
 The Windows production install uses `deploy\install-server.ps1`. It should preserve existing
-configuration, run migrations, and register or update the Windows Scheduled Task for the API.
+configuration, run migrations, and register or update the Windows Scheduled Tasks for the API and
+central Panel UI.
 On first install, it creates a template `.env` and skips migration until the operator configures the
 real PostgreSQL values.
 
@@ -406,7 +408,8 @@ real PostgreSQL values.
      -ReleaseSource .
    ```
 
-   Add `-InstallAdminUi` when the server should also host the admin UI endpoint.
+   The server installer creates both the API task and the central UI task by default. Use `-SkipUi`
+   only for exceptional API-only diagnostics.
 
 4. Edit `C:\SLF\TrackTrace\current\.env` before starting services. Production values must include
    the PostgreSQL connection and `COMPANION_AUTH_REQUIRED=true`. On updates, the installer copies
@@ -425,8 +428,6 @@ real PostgreSQL values.
    Start-ScheduledTask -TaskName "SLF Track Trace API"
    ```
 
-   If installed with `-InstallAdminUi`, also run:
-
    ```powershell
    Start-ScheduledTask -TaskName "SLF Track Trace UI"
    ```
@@ -438,15 +439,13 @@ real PostgreSQL values.
    Invoke-WebRequest http://localhost:8000/health
    ```
 
-   If installed with `-InstallAdminUi`, also check:
-
    ```powershell
    Invoke-WebRequest http://localhost:5006/app
    ```
 
 ## Windows Rollback
 
-1. Stop `SLF Track Trace API`, and stop `SLF Track Trace UI` if it was installed.
+1. Stop `SLF Track Trace API` and `SLF Track Trace UI` Scheduled Tasks.
 2. Remove the `C:\SLF\TrackTrace\current` junction.
 3. Recreate the junction to the previous version:
 
@@ -470,11 +469,11 @@ Invoke-WebRequest http://localhost:8000/health?database=false
 Invoke-WebRequest http://localhost:8000/health
 ```
 
-Panel:
+Central UI:
 
 ```text
-http://127.0.0.1:5006/app
-http://127.0.0.1:5006/kiosk?station_id=1
+http://<server-host>:5006/app
+http://<server-host>:5006/kiosk?station_id=1
 ```
 
 Companion:

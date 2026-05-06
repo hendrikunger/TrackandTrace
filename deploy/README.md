@@ -11,8 +11,8 @@ Install on offline production machines:
 
 - Windows API/database server: `deploy/install-server.ps1`
 - Linux API server: `deploy/install-server.sh`
-- Windows 11 panel station: `deploy/install-panel.ps1`
-- Ubuntu 24.04 panel station: `deploy/install-panel.sh`
+- Windows 11 station companion: `deploy/install-panel.ps1`
+- Ubuntu 24.04 station companion: `deploy/install-panel.sh`
 
 Read `docs/deployment.md` before using these scripts. The scripts are intentionally conservative:
 they unpack versioned releases and point `current` at the selected release, so rollback can switch
