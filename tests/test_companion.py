@@ -382,6 +382,36 @@ async def test_runtime_submits_partial_measurement_after_timeout(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+async def test_runtime_keeps_empty_measurement_request_open_after_timeout(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 19, "rueckmeldenummer": "RM-WAIT-FOR-SMB"}
+    )
+    config = _config(str(tmp_path / "state.sqlite3"))
+    config = CompanionRuntimeConfig(
+        station_id=config.station_id,
+        server_url=config.server_url,
+        state_path=config.state_path,
+        heartbeat_interval_seconds=config.heartbeat_interval_seconds,
+        outbox_retry_interval_seconds=config.outbox_retry_interval_seconds,
+        measurement_aggregation_timeout_seconds=0.0,
+    )
+    runtime = CompanionRuntime(config, client=client)
+    runtime.station_config = {
+        "measurement_types": [
+            {"code": "breite", "label": "Breite", "unit": "mm"},
+        ]
+    }
+
+    assert await runtime.fetch_measurement_request_once()
+
+    assert not runtime.pending_request_timed_out()
+    assert runtime.measurement_needed()
+    assert runtime.latest_rueckmeldenummer == "RM-WAIT-FOR-SMB"
+    assert runtime.outbox.count() == 0
+
+
+@pytest.mark.asyncio
 async def test_runtime_barcode_scan_does_not_request_measurement(tmp_path) -> None:
     runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
 

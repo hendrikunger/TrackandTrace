@@ -243,7 +243,7 @@ class CompanionRuntime:
 
     def pending_request_timed_out(self) -> bool:
         pending = self.pending_measurement_request
-        if pending is None:
+        if pending is None or not pending.values:
             return False
         age = datetime.now(UTC) - pending.started_at
         return age.total_seconds() >= self.config.measurement_aggregation_timeout_seconds
