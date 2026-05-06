@@ -90,7 +90,18 @@ fi
 
 health_url="http://127.0.0.1:${APP_PORT:-8000}/health?database=false"
 echo "Checking $health_url"
-curl -fsS "$health_url"
-echo
+for attempt in $(seq 1 30); do
+  if curl -fsS "$health_url"; then
+    echo
+    break
+  fi
+
+  if [[ "$attempt" -eq 30 ]]; then
+    echo "Health check failed after $attempt attempts." >&2
+    exit 1
+  fi
+
+  sleep 1
+done
 
 echo "Update complete. Log: $LOG_FILE"
