@@ -122,11 +122,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             }
             .slf-kiosk-choice.bk-btn,
             .slf-kiosk-choice .bk-btn {
-                font-size: 28px !important;
+                font-size: 24px !important;
                 min-height: 152px;
                 height: 152px;
                 padding-left: 24px;
                 padding-right: 24px;
+            }
+            .slf-kiosk-choice *,
+            .slf-kiosk-choice.bk-btn *,
+            .slf-kiosk-choice .bk-btn * {
+                font-size: 24px !important;
             }
             .slf-kiosk select {
                 min-height: 44px;
