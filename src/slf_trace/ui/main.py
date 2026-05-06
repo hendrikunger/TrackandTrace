@@ -1524,7 +1524,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 )
                 set_message(
                     kiosk_message,
-                    kiosk_progress_message(progress or {}, waiting_text),
+                    kiosk_progress_message(
+                        progress or {},
+                        station_row_by_id(kiosk_current_station_id),
+                        waiting_text,
+                    ),
                     "info",
                 )
                 update_kiosk_status(step=2, message=waiting_text)
@@ -2279,16 +2283,27 @@ def kiosk_missing_progress_labels(
     ]
 
 
-def kiosk_progress_message(progress: dict[str, Any], waiting_text: str) -> str:
+def kiosk_progress_message(
+    progress: dict[str, Any],
+    station: dict[str, Any],
+    waiting_text: str,
+) -> str:
+    label_by_code = {
+        detail["code"]: detail["label"]
+        for detail in station.get("measurement_type_details", [])
+    }
     values = progress.get("values", [])
-    value_text = ", ".join(
-        f"{escape(str(value.get('measurement_type') or ''))}: "
-        f"{escape(kiosk_progress_value_text(value))}"
-        for value in values
-    )
+    rendered_values = []
+    for value in values:
+        measurement_type = str(value.get("measurement_type") or "")
+        label = label_by_code.get(measurement_type, measurement_type)
+        rendered_values.append(
+            f"{escape(label)}: {escape(kiosk_progress_value_text(value))}"
+        )
+    value_text = ", ".join(rendered_values)
     return (
         "<div style='font-size:22px;line-height:1.3;font-weight:700'>"
-        f"Messwert empfangen: {value_text}"
+        f"Erledigt: {value_text}"
         "</div>"
         "<div style='font-size:16px;margin-top:8px'>"
         f"{escape(waiting_text)}"

@@ -487,3 +487,65 @@ async def test_tcp_line_adapter_waits_for_measurement_request_before_query(
 
     assert writer.commands == [b"?\r"]
     assert events[0].values[0].measurement_type == "breite"
+
+
+@pytest.mark.asyncio
+async def test_tcp_line_adapter_stops_query_when_configured_type_is_complete(
+    monkeypatch,
+) -> None:
+    writer = None
+    adapter = TcpLineMeasurementAdapter(
+        TcpLineAdapterConfig(
+            host="127.0.0.1",
+            port=9000,
+            measurement_type="innenring",
+            command="?\r",
+            poll_interval_seconds=0.01,
+            reconnect_delay_seconds=0.01,
+        )
+    )
+
+    class FakeReader:
+        async def readline(self):
+            await asyncio.sleep(1)
+            return b""
+
+    class FakeWriter:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, payload):
+            self.commands.append(payload)
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def open_connection(host, port):
+        nonlocal writer
+        writer = FakeWriter()
+        return FakeReader(), writer
+
+    async def emit(event):
+        raise AssertionError("No event expected when measurement type is complete.")
+
+    monkeypatch.setattr("asyncio.open_connection", open_connection)
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=ParserConfig(measurement_types={"breite", "innenring"}),
+        measurement_type_needed=lambda measurement_type: measurement_type == "breite",
+    )
+
+    task = asyncio.create_task(adapter.start(context))
+    await asyncio.sleep(0.03)
+    await adapter.stop()
+    await task
+
+    assert writer is not None
+    assert writer.commands == []

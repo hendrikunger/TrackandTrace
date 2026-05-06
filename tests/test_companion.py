@@ -370,6 +370,42 @@ async def test_runtime_reports_partial_measurement_progress_in_heartbeat(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_runtime_reports_only_missing_measurement_types_as_needed(tmp_path) -> None:
+    client = FakeClient()
+    client.measurement_requests.append(
+        {"request_id": 19, "rueckmeldenummer": "RM-NEEDED"}
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "measurement_types": [
+            {"code": "breite", "label": "Breite", "unit": "mm"},
+            {"code": "innenring", "label": "Innenring", "unit": "mm"},
+        ]
+    }
+
+    assert await runtime.fetch_measurement_request_once()
+    await runtime.handle_adapter_event(
+        MeasurementEvent(
+            station_id=1,
+            source_type="tcp",
+            measured_at=datetime(2026, 4, 28, 15, 0, tzinfo=UTC),
+            rueckmeldenummer=None,
+            idempotency_key="measurement-needed-1",
+            values=[
+                MeasurementEventValue(
+                    measurement_type="innenring",
+                    value=Decimal("56.7"),
+                    unit="mm",
+                )
+            ],
+        )
+    )
+
+    assert runtime.measurement_type_needed("breite")
+    assert not runtime.measurement_type_needed("innenring")
+
+
+@pytest.mark.asyncio
 async def test_runtime_submits_partial_measurement_after_timeout(tmp_path) -> None:
     client = FakeClient()
     client.measurement_requests.append(

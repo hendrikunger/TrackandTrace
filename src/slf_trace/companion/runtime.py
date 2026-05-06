@@ -362,6 +362,7 @@ class CompanionRuntime:
             emit_raw_payload=self.handle_raw_payload_event,
             emit_barcode_scan=self.handle_barcode_scan_event,
             measurement_needed=self.measurement_needed,
+            measurement_type_needed=self.measurement_type_needed,
         )
         await asyncio.gather(*(adapter.start(context) for adapter in self.adapters))
 
@@ -434,6 +435,16 @@ class CompanionRuntime:
 
     def measurement_needed(self) -> bool:
         return self.pending_measurement_request is not None
+
+    def measurement_type_needed(self, measurement_type: str | None) -> bool:
+        pending = self.pending_measurement_request
+        if pending is None:
+            return False
+        if not measurement_type:
+            return True
+        if not pending.expected_measurement_types:
+            return True
+        return measurement_type not in pending.values
 
     def expected_measurement_types(self) -> set[str]:
         configured_types = (self.station_config or {}).get("measurement_types", [])

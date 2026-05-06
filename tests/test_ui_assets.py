@@ -89,4 +89,7 @@ def test_kiosk_progress_helpers_format_received_values() -> None:
 
     assert kiosk_progress_value_text(progress["values"][0]) == "77,7 mm"
     assert kiosk_missing_progress_labels(progress, station) == ["Innenring"]
-    assert "Messwert empfangen" in kiosk_progress_message(progress, "Warte auf Innenring.")
+    assert (
+        "Erledigt: Breite: 77,7 mm"
+        in kiosk_progress_message(progress, station, "Warte auf Innenring.")
+    )

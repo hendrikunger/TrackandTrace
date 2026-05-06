@@ -122,6 +122,7 @@ AdapterEmit = Callable[[MeasurementEvent], Awaitable[None]]
 RawPayloadEmit = Callable[[RawPayloadEvent], Awaitable[None]]
 BarcodeScanEmit = Callable[[BarcodeScanEvent], Awaitable[None]]
 MeasurementNeeded = Callable[[], bool]
+MeasurementTypeNeeded = Callable[[str | None], bool]
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ class AdapterContext:
     emit_raw_payload: RawPayloadEmit | None = None
     emit_barcode_scan: BarcodeScanEmit | None = None
     measurement_needed: MeasurementNeeded | None = None
+    measurement_type_needed: MeasurementTypeNeeded | None = None
 
 
 class MeasurementAdapter(ABC):

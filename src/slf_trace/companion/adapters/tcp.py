@@ -61,7 +61,7 @@ class TcpLineMeasurementAdapter(MeasurementAdapter):
         try:
             while not self._stop_event.is_set():
                 if self.config.command is not None:
-                    if not _measurement_needed(context):
+                    if not _measurement_needed(context, self.config.measurement_type):
                         await self._sleep_until_poll()
                         continue
                     writer.write(self.config.command.encode(self.config.encoding))
@@ -119,5 +119,7 @@ def _has_measurement_key(content: str) -> bool:
     return "=" in content or ":" in content
 
 
-def _measurement_needed(context: AdapterContext) -> bool:
+def _measurement_needed(context: AdapterContext, measurement_type: str | None) -> bool:
+    if context.measurement_type_needed is not None:
+        return context.measurement_type_needed(measurement_type)
     return context.measurement_needed is None or context.measurement_needed()

@@ -156,7 +156,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
 
         while not self._stop_event.is_set():
             try:
-                if not _measurement_needed(context):
+                if not _measurement_needed(context, self.config.measurement_type):
                     self._status = AdapterStatus(
                         name=self.name,
                         state=AdapterState.ONLINE,
@@ -192,7 +192,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
         return self._status
 
     async def poll_once(self, context: AdapterContext) -> bool:
-        if not _measurement_needed(context):
+        if not _measurement_needed(context, self.config.measurement_type):
             return False
         return await self.emit_read_result(context, self.read_once())
 
@@ -345,7 +345,9 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
             return
 
 
-def _measurement_needed(context: AdapterContext) -> bool:
+def _measurement_needed(context: AdapterContext, measurement_type: str | None) -> bool:
+    if context.measurement_type_needed is not None:
+        return context.measurement_type_needed(measurement_type)
     return context.measurement_needed is None or context.measurement_needed()
 
 
