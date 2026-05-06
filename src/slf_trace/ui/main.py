@@ -120,6 +120,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 min-height: 64px;
                 font-weight: 700;
             }
+            .slf-kiosk-choice .bk-btn {
+                font-size: 22px !important;
+                min-height: 76px;
+                padding-left: 24px;
+                padding-right: 24px;
+            }
             .slf-kiosk select {
                 min-height: 44px;
             }
@@ -512,14 +518,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_keep_measurement_button = pn.widgets.Button(
         name="Wert behalten",
         button_type="success",
-        width=150,
+        width=220,
         visible=False,
+        css_classes=["slf-kiosk-choice"],
     )
     kiosk_new_measurement_button = pn.widgets.Button(
         name="Neu messen",
         button_type="primary",
-        width=150,
+        width=220,
         visible=False,
+        css_classes=["slf-kiosk-choice"],
     )
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
     kiosk_measurement_form = pn.Column(sizing_mode="stretch_width")
@@ -1902,7 +1910,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         pn.Spacer(sizing_mode="stretch_height"),
         kiosk_step_message,
         kiosk_message,
-        pn.Row(kiosk_keep_measurement_button, kiosk_new_measurement_button),
+        pn.Row(
+            kiosk_keep_measurement_button,
+            kiosk_new_measurement_button,
+            styles={"gap": "14px"},
+        ),
         sizing_mode="stretch_width",
         css_classes=["slf-kiosk"],
         styles={
