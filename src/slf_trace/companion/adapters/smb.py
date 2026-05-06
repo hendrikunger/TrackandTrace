@@ -37,6 +37,8 @@ class SmbPollingAdapterConfig:
     client_name: str = "slf-trace-companion"
     server_name: str | None = None
     port: int = 445
+    support_smb2: bool = False
+    use_ntlm_v2: bool = False
     timeout_seconds: float = 10.0
     poll_interval_seconds: float = 2.0
     encoding: str = "cp1252"
@@ -44,6 +46,7 @@ class SmbPollingAdapterConfig:
     filename_pattern: str = r"_(\d+)\.csv$"
     delete_after_success: bool = True
     delete_with_smbclient: bool = True
+    smbclient_min_protocol: str = "NT1"
     processed_hashes_path: str | Path | None = None
 
 
@@ -109,13 +112,13 @@ class SmbConnectionManager:
 
     def _connect(self) -> Any:
         smb_structs, smb_connection = _load_pysmb()
-        smb_structs.SUPPORT_SMB2 = False
+        smb_structs.SUPPORT_SMB2 = self.config.support_smb2
         conn = smb_connection.SMBConnection(
             self.config.username,
             self.config.password,
             self.config.client_name,
             self.config.server_name or self.config.server,
-            use_ntlm_v2=False,
+            use_ntlm_v2=self.config.use_ntlm_v2,
             is_direct_tcp=self.config.port == 445,
         )
         connected = conn.connect(
@@ -312,6 +315,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
                 username=self.config.username,
                 password=self.config.password,
                 remote_path=remote_path,
+                min_protocol=self.config.smbclient_min_protocol,
             )
             return
 
@@ -343,6 +347,7 @@ def delete_remote_file_smbclient(
     username: str,
     password: str,
     remote_path: str,
+    min_protocol: str = "NT1",
 ) -> None:
     clean_path = remote_path.lstrip("/")
     cmd = [
@@ -350,7 +355,7 @@ def delete_remote_file_smbclient(
         f"//{server}/{share}",
         "-U",
         f"{username}%{password}",
-        "--option=client min protocol=NT1",
+        f"--option=client min protocol={min_protocol}",
         "-c",
         f'del "{clean_path}"',
     ]

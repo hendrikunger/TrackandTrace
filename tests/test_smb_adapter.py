@@ -158,7 +158,7 @@ def test_smb_adapter_finds_latest_numbered_file(tmp_path) -> None:
     assert latest.path == "/ExcelAusgabe/result_10.csv"
 
 
-def test_smbclient_delete_uses_nt1_protocol(monkeypatch) -> None:
+def test_smbclient_delete_uses_configured_protocol(monkeypatch) -> None:
     calls = []
 
     class Result:
@@ -181,6 +181,7 @@ def test_smbclient_delete_uses_nt1_protocol(monkeypatch) -> None:
         username="station",
         password="secret",
         remote_path="/ExcelAusgabe/result_10.csv",
+        min_protocol="SMB2",
     )
 
     assert calls[0] == [
@@ -188,7 +189,7 @@ def test_smbclient_delete_uses_nt1_protocol(monkeypatch) -> None:
         "//10.0.0.50/MEASURE",
         "-U",
         "station%secret",
-        "--option=client min protocol=NT1",
+        "--option=client min protocol=SMB2",
         "-c",
         'del "ExcelAusgabe/result_10.csv"',
     ]
@@ -214,3 +215,24 @@ def test_smb_config_uses_per_station_remote_dir_and_env_secrets(monkeypatch) -> 
     assert config.remote_dir == "/CustomOutput"
     assert config.username == "station"
     assert config.password == "secret"
+
+
+def test_smb_config_can_enable_smb2_for_test_shares() -> None:
+    config = smb_config_from_dict(
+        {
+            "type": "smb1_polling",
+            "server": "truenas.home.io",
+            "share": "agents",
+            "username": "station",
+            "password": "secret",
+            "measurement_type": "breite",
+            "value_column_index": 0,
+            "support_smb2": True,
+            "use_ntlm_v2": True,
+            "smbclient_min_protocol": "SMB2",
+        }
+    )
+
+    assert config.support_smb2 is True
+    assert config.use_ntlm_v2 is True
+    assert config.smbclient_min_protocol == "SMB2"

@@ -184,6 +184,10 @@ SMB1 share. It is based on the working station behavior:
 - delete through `smbclient --option=client min protocol=NT1` when the server does not support
   reliable `pysmb` deletion.
 
+SMB1 remains the default because it matches the production device. For test shares on newer NAS
+systems, set `support_smb2`, `use_ntlm_v2`, and `smbclient_min_protocol` explicitly in the station
+adapter configuration.
+
 Install the optional SMB dependency on stations that need it:
 
 ```bash
@@ -207,6 +211,9 @@ Station-specific example for the `adapter_config` field:
     "value_column_index": 13,
     "delete_after_success": true,
     "delete_with_smbclient": true,
+    "support_smb2": false,
+    "use_ntlm_v2": false,
+    "smbclient_min_protocol": "NT1",
     "processed_hashes_path": "state/smb-processed.json"
   }
 ]

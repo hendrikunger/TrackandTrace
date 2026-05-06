@@ -90,6 +90,8 @@ def smb_config_from_dict(config: dict[str, Any]) -> SmbPollingAdapterConfig:
         client_name=_optional_str(config, "client_name") or "slf-trace-companion",
         server_name=_optional_str(config, "server_name"),
         port=int(config.get("port", 445)),
+        support_smb2=bool(config.get("support_smb2", False)),
+        use_ntlm_v2=bool(config.get("use_ntlm_v2", False)),
         timeout_seconds=float(config.get("timeout_seconds", 10.0)),
         poll_interval_seconds=float(config.get("poll_interval_seconds", 2.0)),
         encoding=_optional_str(config, "encoding") or "cp1252",
@@ -97,6 +99,7 @@ def smb_config_from_dict(config: dict[str, Any]) -> SmbPollingAdapterConfig:
         filename_pattern=_optional_str(config, "filename_pattern") or r"_(\d+)\.csv$",
         delete_after_success=bool(config.get("delete_after_success", True)),
         delete_with_smbclient=bool(config.get("delete_with_smbclient", True)),
+        smbclient_min_protocol=_optional_str(config, "smbclient_min_protocol") or "NT1",
         processed_hashes_path=_optional_str(config, "processed_hashes_path"),
     )
 
