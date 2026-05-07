@@ -29,6 +29,7 @@ from slf_trace.models import (
     Part,
     RawPayload,
     Station,
+    StationEvent,
     StationHeartbeat,
 )
 from slf_trace.security import generate_station_token, hash_station_token
@@ -2251,38 +2252,59 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
             )
         )
     }
-    stations = session.scalars(
-        select(Station)
-        .options(
-            selectinload(Station.heartbeats),
-            selectinload(Station.events),
+    latest_heartbeat_at = (
+        select(
+            StationHeartbeat.station_id,
+            func.max(StationHeartbeat.received_at).label("received_at"),
+        )
+        .group_by(StationHeartbeat.station_id)
+        .subquery()
+    )
+    latest_event_at = (
+        select(
+            StationEvent.station_id,
+            func.max(StationEvent.occurred_at).label("occurred_at"),
+        )
+        .group_by(StationEvent.station_id)
+        .subquery()
+    )
+    station_rows = session.execute(
+        select(Station, StationHeartbeat, StationEvent)
+        .outerjoin(
+            latest_heartbeat_at,
+            latest_heartbeat_at.c.station_id == Station.id,
+        )
+        .outerjoin(
+            StationHeartbeat,
+            (StationHeartbeat.station_id == Station.id)
+            & (StationHeartbeat.received_at == latest_heartbeat_at.c.received_at),
+        )
+        .outerjoin(
+            latest_event_at,
+            latest_event_at.c.station_id == Station.id,
+        )
+        .outerjoin(
+            StationEvent,
+            (StationEvent.station_id == Station.id)
+            & (StationEvent.occurred_at == latest_event_at.c.occurred_at),
         )
         .order_by(Station.name)
-    ).all()
+    ).unique()
     measurement_type_details_by_code = load_measurement_type_details_by_code(session)
 
     rows = []
-    for station in stations:
-        latest_heartbeat = max(
-            station.heartbeats,
-            key=lambda heartbeat: heartbeat.received_at,
-            default=None,
-        )
-        latest_event = max(
-            station.events,
-            key=lambda event: event.occurred_at,
-            default=None,
-        )
+    for station, latest_heartbeat, latest_event in station_rows:
         latest_event = current_station_event(
             latest_event,
             latest_measurement_at.get(station.id),
         )
         current_events = [
             event
-            for event in sorted(
-                station.events,
-                key=lambda item: item.occurred_at,
-                reverse=True,
+            for event in session.scalars(
+                select(StationEvent)
+                .where(StationEvent.station_id == station.id)
+                .order_by(StationEvent.occurred_at.desc())
+                .limit(50)
             )
             if current_station_event(event, latest_measurement_at.get(station.id)) is not None
         ][:20]
