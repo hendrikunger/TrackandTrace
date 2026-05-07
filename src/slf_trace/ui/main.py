@@ -1591,7 +1591,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     def show_kiosk_measurement_found(value_html: str) -> None:
         kiosk_message.object = (
             "<div style='font-size:28px;line-height:1.25;font-weight:700;margin-bottom:4px'>"
-            "Messung gefunden:"
+            "Letzte Messung:"
             "</div>"
             f"{value_html}"
         )
