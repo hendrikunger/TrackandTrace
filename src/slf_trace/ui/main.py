@@ -237,6 +237,33 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         height=180,
         sizing_mode="stretch_width",
     )
+    measurement_type_table = pn.widgets.Tabulator(
+        value=pd.DataFrame(),
+        editors={
+            "code": None,
+            "label": None,
+            "unit": None,
+            "active": None,
+        },
+        selectable=1,
+        height=260,
+        sizing_mode="stretch_width",
+    )
+    measurement_type_code = pn.widgets.TextInput(name="Code", width=220)
+    measurement_type_label = pn.widgets.TextInput(name="Label", width=260)
+    measurement_type_unit = pn.widgets.TextInput(name="Unit", value="mm", width=120)
+    measurement_type_active = pn.widgets.Checkbox(name="Active", value=True)
+    measurement_type_new_button = pn.widgets.Button(
+        name="New measurement type",
+        button_type="primary",
+        width=180,
+    )
+    measurement_type_save_button = pn.widgets.Button(
+        name="Save measurement type",
+        button_type="success",
+        width=190,
+    )
+    measurement_type_message = pn.pane.Alert("", alert_type="info", visible=False)
     station_name_status = pn.pane.Markdown(
         "Select a station to review configuration.",
         width=180,
@@ -609,7 +636,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_measurement_baseline_id = 0
 
     station_rows: list[dict[str, Any]] = []
+    measurement_type_rows: list[dict[str, Any]] = []
     selected_station_id: int | None = None
+    selected_measurement_type_code: str | None = None
     creating_station = False
     selected_adapter_index: int | None = None
     adapter_configs: list[dict[str, Any]] = []
@@ -631,6 +660,98 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         create_station_button.visible = enabled
         cancel_station_button.visible = enabled
 
+    def refresh_measurement_types(clear_message: bool = True) -> None:
+        nonlocal measurement_type_rows
+        try:
+            with session_scope(settings) as session:
+                measurement_type_rows = load_measurement_type_rows(session)
+        except Exception as exc:  # noqa: BLE001
+            set_message(
+                measurement_type_message,
+                f"Could not load measurement types: {exc}",
+                "danger",
+            )
+            return
+
+        measurement_type_table.value = pd.DataFrame(measurement_type_rows)
+        active_type_options = [
+            row["code"] for row in measurement_type_rows if row.get("active") is True
+        ]
+        adapter_measurement_type.options = active_type_options
+        if active_type_options and adapter_measurement_type.value not in active_type_options:
+            adapter_measurement_type.value = active_type_options[0]
+        if clear_message:
+            measurement_type_message.visible = False
+
+    def clear_measurement_type_form(_: object | None = None) -> None:
+        nonlocal selected_measurement_type_code
+        selected_measurement_type_code = None
+        measurement_type_table.selection = []
+        measurement_type_code.disabled = False
+        measurement_type_code.value = ""
+        measurement_type_label.value = ""
+        measurement_type_unit.value = "mm"
+        measurement_type_active.value = True
+        measurement_type_message.visible = False
+
+    def select_measurement_type(event: Any) -> None:
+        nonlocal selected_measurement_type_code
+        if not event.new:
+            return
+        row_index = event.new[0]
+        if measurement_type_table.value.empty or row_index >= len(measurement_type_table.value):
+            return
+
+        row = measurement_type_table.value.iloc[row_index]
+        selected_measurement_type_code = str(row["code"])
+        measurement_type_code.value = selected_measurement_type_code
+        measurement_type_code.disabled = True
+        measurement_type_label.value = str(row["label"] or "")
+        measurement_type_unit.value = str(row["unit"] or "")
+        measurement_type_active.value = bool(row["active"])
+        measurement_type_message.visible = False
+
+    def save_measurement_type(_: object | None = None) -> None:
+        nonlocal selected_measurement_type_code
+        code = measurement_type_code.value.strip().lower().replace(" ", "_")
+        label = measurement_type_label.value.strip()
+        unit = measurement_type_unit.value.strip() or None
+
+        if not code:
+            set_message(measurement_type_message, "Code is required.", "warning")
+            return
+        if not label:
+            set_message(measurement_type_message, "Label is required.", "warning")
+            return
+
+        try:
+            with session_scope(settings) as session:
+                measurement_type = session.get(
+                    MeasurementType,
+                    selected_measurement_type_code or code,
+                )
+                if measurement_type is None:
+                    measurement_type = MeasurementType(code=code, label=label, unit=unit)
+                    session.add(measurement_type)
+                else:
+                    measurement_type.label = label
+                    measurement_type.unit = unit
+                measurement_type.active = measurement_type_active.value
+                selected_measurement_type_code = measurement_type.code
+        except Exception as exc:  # noqa: BLE001
+            set_message(
+                measurement_type_message,
+                f"Could not save measurement type: {exc}",
+                "danger",
+            )
+            return
+
+        measurement_type_code.value = selected_measurement_type_code or code
+        measurement_type_code.disabled = True
+        refresh_measurement_types(clear_message=False)
+        refresh_stations(clear_message=False)
+        set_message(measurement_type_message, "Measurement type saved.", "success")
+
     def refresh_stations(
         _: object | None = None,
         *,
@@ -641,10 +762,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         try:
             with session_scope(settings) as session:
                 station_rows = load_station_rows(session)
-                type_options = load_measurement_type_options(session)
-                adapter_measurement_type.options = type_options
-                if type_options and not adapter_measurement_type.value:
-                    adapter_measurement_type.value = type_options[0]
         except Exception as exc:  # noqa: BLE001
             set_message(station_message, f"Could not load station data: {exc}", "danger")
             return
@@ -1705,10 +1822,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         )
 
     station_table.param.watch(select_station, "selection")
+    measurement_type_table.param.watch(select_measurement_type, "selection")
     adapter_table.param.watch(select_adapter, "selection")
     history_table.param.watch(select_measurement, "selection")
     kiosk_station.param.watch(load_kiosk_station, "value")
     refresh_button.on_click(refresh_stations)
+    measurement_type_new_button.on_click(clear_measurement_type_form)
+    measurement_type_save_button.on_click(save_measurement_type)
     new_station_button.on_click(start_new_station)
     create_station_button.on_click(create_station_from_form)
     cancel_station_button.on_click(cancel_new_station)
@@ -1776,6 +1896,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     ):
         adapter_widget.param.watch(autoupdate_adapter, "value")
 
+    refresh_measurement_types()
     refresh_stations()
 
     station_status_bar = pn.Row(
@@ -1963,6 +2084,24 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "margin-top": "8px",
         },
     )
+    measurement_types_panel = pn.Column(
+        pn.Row(
+            measurement_type_new_button,
+            measurement_type_save_button,
+            sizing_mode="stretch_width",
+        ),
+        measurement_type_table,
+        pn.GridBox(
+            measurement_type_code,
+            measurement_type_label,
+            measurement_type_unit,
+            measurement_type_active,
+            ncols=2,
+            align="start",
+        ),
+        measurement_type_message,
+        sizing_mode="stretch_width",
+    )
     kiosk_panel = pn.Column(
         pn.Row(
             pn.Row(
@@ -2030,6 +2169,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     station_adapters_section,
                     sizing_mode="stretch_width",
                 ),
+            ),
+            (
+                "Measurement types",
+                measurement_types_panel,
             ),
             (
                 "Measurement history",
@@ -2175,14 +2318,18 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
     return rows
 
 
-def load_measurement_type_options(session: Session) -> list[str]:
-    return list(
-        session.scalars(
-            select(MeasurementType.code)
-            .where(MeasurementType.active.is_(True))
-            .order_by(MeasurementType.code)
+def load_measurement_type_rows(session: Session) -> list[dict[str, Any]]:
+    return [
+        {
+            "code": measurement_type.code,
+            "label": measurement_type.label,
+            "unit": measurement_type.unit,
+            "active": measurement_type.active,
+        }
+        for measurement_type in session.scalars(
+            select(MeasurementType).order_by(MeasurementType.code)
         )
-    )
+    ]
 
 
 def load_measurement_type_details_by_code(session: Session) -> dict[str, dict[str, str | None]]:
