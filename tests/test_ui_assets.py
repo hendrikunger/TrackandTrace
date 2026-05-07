@@ -82,10 +82,13 @@ def test_measurement_value_html_renders_each_value_on_own_line() -> None:
     html = measurement_value_html(measurement, station)
 
     assert html.count("slf-kiosk-value-row") == 2
-    assert "<span class='slf-kiosk-value-label'>Breite</span>" in html
-    assert "<span class='slf-kiosk-value-number'>32,2000 mm</span>" in html
-    assert "<span class='slf-kiosk-value-label'>Innenring</span>" in html
-    assert "<span class='slf-kiosk-value-number'>45,0000 mm</span>" in html
+    assert "column-gap:28px" in html
+    assert "font-size:28px" in html
+    assert "font-size:34px" in html
+    assert ">Breite</span>" in html
+    assert ">32,2000 mm</span>" in html
+    assert ">Innenring</span>" in html
+    assert ">45,0000 mm</span>" in html
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
