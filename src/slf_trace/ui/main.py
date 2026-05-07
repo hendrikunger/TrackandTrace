@@ -162,6 +162,31 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             .slf-kiosk h2, .slf-kiosk h3 {
                 letter-spacing: 0;
             }
+            .slf-kiosk-message {
+                overflow: visible !important;
+                white-space: normal !important;
+            }
+            .slf-kiosk-values {
+                display: grid;
+                gap: 8px;
+                margin-top: 10px;
+            }
+            .slf-kiosk-value-row {
+                align-items: baseline;
+                display: grid;
+                gap: 8px 18px;
+                grid-template-columns: minmax(160px, max-content) minmax(0, 1fr);
+            }
+            .slf-kiosk-value-label {
+                font-size: 24px;
+                font-weight: 700;
+                overflow-wrap: anywhere;
+            }
+            .slf-kiosk-value-number {
+                font-size: 28px;
+                font-weight: 800;
+                overflow-wrap: anywhere;
+            }
             """
         )
         _KIOSK_CSS_REGISTERED = True
@@ -524,7 +549,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="fixed",
     )
     kiosk_status = pn.pane.HTML("")
-    kiosk_message = pn.pane.Alert("", alert_type="info", visible=False)
+    kiosk_message = pn.pane.Alert(
+        "",
+        alert_type="info",
+        css_classes=["slf-kiosk-message"],
+        sizing_mode="stretch_width",
+        visible=False,
+    )
     kiosk_barcode = pn.widgets.TextInput(
         name="",
         placeholder="Barcode scannen / Rückmeldenummer eingeben",
@@ -1404,16 +1435,17 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
         if existing is not None:
             kiosk_pending_existing_measurement = {
-                "value_text": measurement_value_text(
+                "value_html": measurement_value_html(
                     existing,
                     station_row_by_id(kiosk_current_station_id),
                 ),
                 "station_name": existing.station.name if existing.station else "andere Station",
             }
             kiosk_message.object = (
-                "<div style='font-size:24px;line-height:1.3;font-weight:700'>"
-                f"Vorhandene Messung: {kiosk_pending_existing_measurement['value_text']}"
+                "<div style='font-size:24px;line-height:1.3;font-weight:700;margin-bottom:4px'>"
+                "Vorhandene Messung:"
                 "</div>"
+                f"{kiosk_pending_existing_measurement['value_html']}"
                 "<div style='font-size:16px;margin-top:8px'>"
                 f"Quelle: {escape(kiosk_pending_existing_measurement['station_name'])}. "
                 "Wert behalten oder neu vom Messgerät laden?"
@@ -1470,7 +1502,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         nonlocal kiosk_current_barcode, kiosk_pending_existing_measurement
         if kiosk_pending_existing_measurement is None:
             return
-        show_kiosk_measurement_found(kiosk_pending_existing_measurement["value_text"])
+        show_kiosk_measurement_found(kiosk_pending_existing_measurement["value_html"])
         kiosk_barcode.value = ""
         kiosk_current_barcode = None
         kiosk_pending_existing_measurement = None
@@ -1541,7 +1573,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             return
 
         show_kiosk_measurement_found(
-            measurement_value_text(
+            measurement_value_html(
                 measurement,
                 station_row_by_id(kiosk_current_station_id),
             )
@@ -1556,11 +1588,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             input_widget.disabled = True
         update_kiosk_status(step=1)
 
-    def show_kiosk_measurement_found(value_text: str) -> None:
+    def show_kiosk_measurement_found(value_html: str) -> None:
         kiosk_message.object = (
-            "<div style='font-size:28px;line-height:1.25;font-weight:700'>"
-            f"Messung gefunden: {escape(value_text)}"
+            "<div style='font-size:28px;line-height:1.25;font-weight:700;margin-bottom:4px'>"
+            "Messung gefunden:"
             "</div>"
+            f"{value_html}"
         )
         kiosk_message.alert_type = "success"
         kiosk_message.visible = True
@@ -2255,18 +2288,40 @@ def load_latest_measurement_for_station_type(
 
 
 def measurement_value_text(measurement: Measurement, station: dict[str, Any] | None = None) -> str:
+    return ", ".join(
+        f"{label}: {value_text}"
+        for label, value_text in measurement_value_lines(measurement, station)
+    )
+
+
+def measurement_value_html(measurement: Measurement, station: dict[str, Any] | None = None) -> str:
+    rows = []
+    for label, value_text in measurement_value_lines(measurement, station):
+        rows.append(
+            "<div class='slf-kiosk-value-row'>"
+            f"<span class='slf-kiosk-value-label'>{escape(label)}</span>"
+            f"<span class='slf-kiosk-value-number'>{escape(value_text)}</span>"
+            "</div>"
+        )
+    return "<div class='slf-kiosk-values'>" + "".join(rows) + "</div>"
+
+
+def measurement_value_lines(
+    measurement: Measurement,
+    station: dict[str, Any] | None = None,
+) -> list[tuple[str, str]]:
     label_by_code = {
         str(detail.get("code")): str(detail.get("label") or detail.get("code"))
         for detail in (station or {}).get("measurement_type_details", [])
         if detail.get("code")
     }
-    return ", ".join(
+    return [
         (
-            f"{label_by_code.get(value.measurement_type, value.measurement_type)}: "
-            f"{str(value.value).replace('.', ',')} {value.unit or ''}"
-        ).strip()
+            label_by_code.get(value.measurement_type, value.measurement_type),
+            f"{str(value.value).replace('.', ',')} {value.unit or ''}".strip(),
+        )
         for value in sorted(measurement.values, key=lambda item: item.measurement_type)
-    )
+    ]
 
 
 def load_kiosk_measurement_progress(

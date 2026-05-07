@@ -9,6 +9,7 @@ from slf_trace.ui.main import (
     kiosk_progress_message,
     kiosk_progress_value_text,
     kiosk_workflow_title,
+    measurement_value_html,
     measurement_value_text,
     resolve_kiosk_station_id,
 )
@@ -62,6 +63,29 @@ def test_measurement_value_text_labels_values_by_measurement_type() -> None:
     assert measurement_value_text(measurement, station) == (
         "Breite: 32,2000 mm, Innenring: 45,0000 mm"
     )
+
+
+def test_measurement_value_html_renders_each_value_on_own_line() -> None:
+    measurement = SimpleNamespace(
+        values=[
+            SimpleNamespace(measurement_type="innenring", value=Decimal("45.0000"), unit="mm"),
+            SimpleNamespace(measurement_type="breite", value=Decimal("32.2000"), unit="mm"),
+        ]
+    )
+    station = {
+        "measurement_type_details": [
+            {"code": "breite", "label": "Breite"},
+            {"code": "innenring", "label": "Innenring"},
+        ]
+    }
+
+    html = measurement_value_html(measurement, station)
+
+    assert html.count("slf-kiosk-value-row") == 2
+    assert "<span class='slf-kiosk-value-label'>Breite</span>" in html
+    assert "<span class='slf-kiosk-value-number'>32,2000 mm</span>" in html
+    assert "<span class='slf-kiosk-value-label'>Innenring</span>" in html
+    assert "<span class='slf-kiosk-value-number'>45,0000 mm</span>" in html
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
