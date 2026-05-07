@@ -28,6 +28,10 @@ class SimulatorMeasurementAdapter(MeasurementAdapter):
         self._stop_event = asyncio.Event()
         self._status = AdapterStatus(name=self.name, state=AdapterState.STOPPED)
 
+    @property
+    def restart_on_exit(self) -> bool:
+        return self.config.interval_seconds is not None
+
     async def start(self, context: AdapterContext) -> None:
         self._stop_event.clear()
         self._status = AdapterStatus(name=self.name, state=AdapterState.STARTING)
