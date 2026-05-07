@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import os
 import shutil
-import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -3001,7 +3001,7 @@ def run() -> None:
             command.append("--dev")
         command.extend([str(app_path), str(kiosk_path)])
 
-        subprocess.run(command, check=True)
+        os.execvp(command[0], command)
 
 
 def ui_websocket_origins(settings: Settings) -> list[str]:
