@@ -108,8 +108,9 @@ journalctl -u slf-trace-ui.service -n 100 --no-pager
 
 ### Ubuntu Test Station
 
-- Host/IP: `10.0.0.197`
+- Host/IP: `10.0.0.196`
 - SSH user: `u1`
+- SSH key: `~/.ssh/id_rsa`
 - Sudo password: `u1`
 - Repo checkout: `/opt/slf-trace/src/TrackandTrace`
 - Packaged/current environment: `/opt/slf-trace/current/env`
@@ -122,7 +123,7 @@ journalctl -u slf-trace-ui.service -n 100 --no-pager
 Connect:
 
 ```bash
-ssh u1@10.0.0.197
+ssh -i ~/.ssh/id_rsa u1@10.0.0.196
 ```
 
 Update the station from git and restart the companion/kiosk services only when station-side code or
