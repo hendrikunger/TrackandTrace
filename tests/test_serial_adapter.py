@@ -169,3 +169,44 @@ async def test_serial_request_adapter_waits_until_measurement_needed(monkeypatch
     assert events == []
     assert FakeSerialModule.connection.writes == []
     assert adapter.health().state.value == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_serial_request_adapter_degrades_when_idle_path_port_missing(
+    monkeypatch,
+) -> None:
+    FakeSerialModule.connection = FakeSerialConnection(response=b"12,34\r\n")
+    adapter = SerialRequestMeasurementAdapter(
+        SerialRequestAdapterConfig(
+            port="/tmp/slf-trace-missing-serial-port",
+            measurement_type="breite",
+            poll_interval_seconds=0.01,
+        )
+    )
+
+    monkeypatch.setattr(
+        "slf_trace.companion.adapters.serial._load_serial_module",
+        lambda: FakeSerialModule,
+    )
+
+    async def emit(event):
+        raise AssertionError("No measurement should be emitted while idle.")
+
+    task = asyncio.create_task(
+        adapter.start(
+            AdapterContext(
+                station_id=1,
+                emit=emit,
+                parser_config=ParserConfig(measurement_types={"breite"}),
+                measurement_type_needed=lambda measurement_type: False,
+            )
+        )
+    )
+    await asyncio.sleep(0.03)
+
+    assert adapter.health().state.value == "degraded"
+    assert "Serial port is not available" in (adapter.health().last_error or "")
+    assert FakeSerialModule.connection.writes == []
+
+    await adapter.stop()
+    await task

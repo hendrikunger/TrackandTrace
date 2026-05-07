@@ -1,4 +1,5 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -133,6 +134,7 @@ class SerialRequestMeasurementAdapter(MeasurementAdapter):
         while not self._stop_event.is_set():
             try:
                 if not _measurement_needed(context, self.config.measurement_type):
+                    self._validate_idle_port()
                     self._status = AdapterStatus(
                         name=self.name,
                         state=AdapterState.ONLINE,
@@ -171,6 +173,14 @@ class SerialRequestMeasurementAdapter(MeasurementAdapter):
 
     def health(self) -> AdapterStatus:
         return self._status
+
+    def _validate_idle_port(self) -> None:
+        if not _is_path_like_serial_port(self.config.port):
+            return
+        if not os.path.exists(self.config.port):
+            raise OSError(f"Serial port is not available: {self.config.port}.")
+        if not os.access(self.config.port, os.R_OK | os.W_OK):
+            raise PermissionError(f"Serial port is not readable/writable: {self.config.port}.")
 
     async def _sleep_until_poll(self) -> None:
         try:
@@ -248,3 +258,7 @@ def _measurement_needed(context: AdapterContext, measurement_type: str | None) -
     if context.measurement_type_needed is not None:
         return context.measurement_type_needed(measurement_type)
     return context.measurement_needed is None or context.measurement_needed()
+
+
+def _is_path_like_serial_port(port: str) -> bool:
+    return port.startswith(("/", "./", "../"))
