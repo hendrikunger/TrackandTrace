@@ -20,6 +20,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from slf_trace.api.services.admin import current_station_event, is_station_online, station_health
+from slf_trace.companion.runtime import normalize_workflow_type
 from slf_trace.config import Settings, get_settings
 from slf_trace.models import (
     Measurement,
@@ -692,7 +693,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             scanner_host.value = station["scanner_host"] or ""
             scanner_port.value = station["scanner_port"] or 0
             set_select_value(scanner_protocol, station["scanner_protocol"] or "")
-            set_select_value(workflow_type, station["workflow_type"] or "measurement_capture")
+            set_select_value(
+                workflow_type,
+                normalize_workflow_type(station["workflow_type"] or "measurement_capture"),
+            )
             workflow_title.value = station["workflow_title"] or ""
             workflow_config_value = dict(station.get("workflow_config") or {})
             workflow_config_preview.object = workflow_config_value
@@ -805,7 +809,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "scanner_host": scanner_host.value.strip() or None,
             "scanner_port": scanner_port.value or None,
             "scanner_protocol": scanner_protocol.value.strip() or None,
-            "workflow_type": workflow_type.value,
+            "workflow_type": normalize_workflow_type(str(workflow_type.value)),
             "workflow_title": workflow_title.value.strip() or None,
             "workflow_config": dict(workflow_config_value),
             "active": active.value,
@@ -2122,7 +2126,7 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                 "scanner_host": station.scanner_host,
                 "scanner_port": station.scanner_port,
                 "scanner_protocol": station.scanner_protocol,
-                "workflow_type": station.workflow_type,
+                "workflow_type": normalize_workflow_type(station.workflow_type),
                 "workflow_title": station.workflow_title,
                 "workflow_config": station.workflow_config or {},
                 "adapter_config": station.adapter_config or [],

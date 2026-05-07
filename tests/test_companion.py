@@ -26,6 +26,7 @@ from slf_trace.companion.runtime import (
     CompanionRuntime,
     CompanionRuntimeConfig,
     config_from_settings,
+    normalize_workflow_type,
 )
 from slf_trace.config import Settings
 
@@ -243,6 +244,7 @@ def test_runtime_builds_adapters_from_station_config(tmp_path, monkeypatch) -> N
     runtime.station_config = {
         "station_id": 1,
         "name": "Station 1",
+        "workflow_type": "Measurement capture",
         "scanner_host": "10.0.0.21",
         "scanner_port": 9004,
         "scanner_protocol": "Keyence SR-X TCP",
@@ -299,6 +301,12 @@ def test_runtime_skips_measurement_adapters_for_non_measurement_workflow(
     assert runtime.adapters == []
     assert not runtime.is_measurement_capture_workflow()
     assert runtime.build_heartbeat_payload()["adapter_status"]["workflow_type"] == "laser_marking"
+
+
+def test_workflow_type_normalizes_display_labels() -> None:
+    assert normalize_workflow_type("Measurement capture") == "measurement_capture"
+    assert normalize_workflow_type("Laser marking") == "laser_marking"
+    assert normalize_workflow_type("label-printing") == "label_printing"
 
 
 def test_runtime_records_adapter_configuration_failure_without_raising(tmp_path) -> None:

@@ -658,7 +658,8 @@ class CompanionRuntime:
             self.adapters.append(scanner_adapter)
 
     def workflow_type(self) -> str:
-        return str((self.station_config or {}).get("workflow_type") or "measurement_capture")
+        value = str((self.station_config or {}).get("workflow_type") or "measurement_capture")
+        return normalize_workflow_type(value)
 
     def is_measurement_capture_workflow(self) -> bool:
         return self.workflow_type() == "measurement_capture"
@@ -680,6 +681,17 @@ def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeCo
         ),
         station_token=settings.station_token,
     )
+
+
+def normalize_workflow_type(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "measurement_capture": "measurement_capture",
+        "measurement": "measurement_capture",
+        "label_printing": "label_printing",
+        "laser_marking": "laser_marking",
+    }
+    return aliases.get(normalized, normalized or "measurement_capture")
 
 
 def configure_logging(settings: Settings | None = None) -> None:
