@@ -2298,12 +2298,20 @@ def measurement_value_html(measurement: Measurement, station: dict[str, Any] | N
     rows = []
     for label, value_text in measurement_value_lines(measurement, station):
         rows.append(
-            "<div class='slf-kiosk-value-row'>"
-            f"<span class='slf-kiosk-value-label'>{escape(label)}</span>"
-            f"<span class='slf-kiosk-value-number'>{escape(value_text)}</span>"
+            "<div class='slf-kiosk-value-row' "
+            "style='display:grid;grid-template-columns:minmax(180px,max-content) minmax(0,1fr);"
+            "column-gap:28px;row-gap:8px;align-items:baseline;margin-top:8px'>"
+            f"<span class='slf-kiosk-value-label' "
+            "style='font-size:28px;line-height:1.25;font-weight:800;overflow-wrap:anywhere'>"
+            f"{escape(label)}</span>"
+            f"<span class='slf-kiosk-value-number' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;overflow-wrap:anywhere'>"
+            f"{escape(value_text)}</span>"
             "</div>"
         )
-    return "<div class='slf-kiosk-values'>" + "".join(rows) + "</div>"
+    return "<div class='slf-kiosk-values' style='display:grid;gap:8px;margin-top:10px'>" + "".join(
+        rows
+    ) + "</div>"
 
 
 def measurement_value_lines(
