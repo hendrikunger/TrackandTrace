@@ -1,7 +1,10 @@
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -31,10 +34,14 @@ class EventHub:
 
     async def broadcast(self, event: LiveEvent) -> None:
         stale_connections = []
-        for websocket in self._connections:
+        for websocket in list(self._connections):
             try:
                 await websocket.send_json(event.as_dict())
-            except RuntimeError:
+            except Exception as exc:  # noqa: BLE001 - websocket backends raise mixed errors.
+                logger.warning(
+                    "Dropping stale live event connection",
+                    extra={"error": exc.__class__.__name__, "event_type": event.type},
+                )
                 stale_connections.append(websocket)
 
         for websocket in stale_connections:

@@ -22,7 +22,9 @@ python -m compileall src tests
   values.
 - Adapter behavior for simulator, TCP line, Keyence SR-X barcode frames, serial factories, and
   SMB1 polling.
-- Companion outbox persistence and retry.
+- Companion outbox persistence, retry, API-outage bootstrap safety, adapter configuration failure
+  safety, measurement-request polling outage safety, and adapter supervisor restart behavior.
+- Live event delivery around stale websocket clients.
 
 ## Simulators
 

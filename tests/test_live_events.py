@@ -17,6 +17,11 @@ class RecordingWebSocket:
         self.messages.append(payload)
 
 
+class FailingWebSocket(RecordingWebSocket):
+    async def send_json(self, payload):
+        raise ConnectionError("gone")
+
+
 def test_live_event_shape() -> None:
     event = LiveEvent(
         type="measurement.captured",
@@ -46,6 +51,31 @@ async def test_event_hub_broadcasts_to_connected_clients() -> None:
             "station_id": 1,
             "payload": {},
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_event_hub_drops_failed_connections_without_aborting_broadcast() -> None:
+    hub = EventHub()
+    healthy = RecordingWebSocket()
+    failing = FailingWebSocket()
+
+    await hub.connect(failing)
+    await hub.connect(healthy)
+    await hub.broadcast(LiveEvent(type="station.heartbeat", station_id=1, payload={}))
+    await hub.broadcast(LiveEvent(type="measurement.captured", station_id=1, payload={}))
+
+    assert healthy.messages == [
+        {
+            "type": "station.heartbeat",
+            "station_id": 1,
+            "payload": {},
+        },
+        {
+            "type": "measurement.captured",
+            "station_id": 1,
+            "payload": {},
+        },
     ]
 
 

@@ -10,6 +10,9 @@ The first implementation uses an in-process event hub. It is enough for local de
 single central server process. If the deployment later uses multiple worker processes, this should
 move to a shared pub/sub backend.
 
+Delivery is best-effort. A stale or failing browser connection is dropped from the hub and does not
+fail the companion API request that produced the event.
+
 ## Event Shape
 
 ```json

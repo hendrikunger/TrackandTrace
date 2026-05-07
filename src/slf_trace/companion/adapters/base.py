@@ -138,6 +138,7 @@ class AdapterContext:
 
 class MeasurementAdapter(ABC):
     name: str
+    restart_on_exit: bool = True
 
     @abstractmethod
     async def start(self, context: AdapterContext) -> None:
