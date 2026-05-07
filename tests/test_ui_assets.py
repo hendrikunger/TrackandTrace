@@ -98,7 +98,8 @@ def test_measurement_value_html_renders_each_value_on_own_line() -> None:
 
 def test_split_measurement_display_value_keeps_decimal_separator_in_own_column() -> None:
     assert split_measurement_display_value("32,2000 mm") == ("32", ",", "2000", "mm")
-    assert split_measurement_display_value("45 mm") == ("45", "", "", "mm")
+    assert split_measurement_display_value("45 mm") == ("45", ",", "0000", "mm")
+    assert split_measurement_display_value("44") == ("44", ",", "0000", "")
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
@@ -159,11 +160,11 @@ def test_kiosk_progress_helpers_format_received_values() -> None:
         ]
     }
 
-    assert kiosk_progress_value_text(progress["values"][0]) == "77,7 mm"
+    assert kiosk_progress_value_text(progress["values"][0]) == "77,7000 mm"
     assert kiosk_missing_progress_labels(progress, station) == ["Innenring"]
     message = kiosk_progress_message(progress, station, "Warte auf Innenring.")
     assert "Erledigt:" in message
     assert ">Breite</span>" in message
     assert ">77</span>" in message
-    assert ">7</span>" in message
+    assert ">7000</span>" in message
     assert "Warte auf Innenring." in message

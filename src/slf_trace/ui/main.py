@@ -2352,13 +2352,15 @@ def split_measurement_display_value(value_text: str) -> tuple[str, str, str, str
     parts = value_text.strip().split()
     numeric_text = parts[0] if parts else ""
     unit = " ".join(parts[1:])
-    if "," in numeric_text:
-        integer_part, fraction_part = numeric_text.split(",", 1)
-        return integer_part, ",", fraction_part, unit
-    if "." in numeric_text:
-        integer_part, fraction_part = numeric_text.split(".", 1)
-        return integer_part, ".", fraction_part, unit
-    return numeric_text, "", "", unit
+    try:
+        formatted_number = f"{Decimal(numeric_text.replace(',', '.')):.4f}".replace(".", ",")
+    except InvalidOperation:
+        formatted_number = numeric_text.replace(".", ",")
+
+    if "," not in formatted_number:
+        formatted_number = f"{formatted_number},0000"
+    integer_part, fraction_part = formatted_number.split(",", 1)
+    return integer_part, ",", fraction_part[:4].ljust(4, "0"), unit
 
 
 def measurement_value_lines(
@@ -2403,7 +2405,11 @@ def load_kiosk_measurement_progress(
 
 
 def kiosk_progress_value_text(value: dict[str, Any]) -> str:
-    number = str(value.get("value") or "").replace(".", ",")
+    raw_number = str(value.get("value") or "")
+    try:
+        number = f"{Decimal(raw_number.replace(',', '.')):.4f}".replace(".", ",")
+    except InvalidOperation:
+        number = raw_number.replace(".", ",")
     unit = str(value.get("unit") or "").strip()
     return f"{number} {unit}".strip()
 
