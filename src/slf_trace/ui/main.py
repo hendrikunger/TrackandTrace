@@ -524,10 +524,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="fixed",
     )
     kiosk_status = pn.pane.HTML("")
-    kiosk_step_message = pn.pane.HTML(
-        "<div style='font-size:24px;margin:0;color:#111827'>Bereit.</div>",
-        sizing_mode="stretch_width",
-    )
     kiosk_message = pn.pane.Alert("", alert_type="info", visible=False)
     kiosk_barcode = pn.widgets.TextInput(
         name="",
@@ -1308,18 +1304,21 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         build_kiosk_measurement_form(station)
         if station["workflow_type"] == "measurement_capture":
             kiosk_barcode.visible = True
-            update_kiosk_status(
-                step=1,
-                message="Bitte Barcode scannen oder Rückmeldenummer eingeben.",
+            update_kiosk_status(step=1)
+            set_message(
+                kiosk_message,
+                "Bitte Barcode scannen oder Rückmeldenummer eingeben.",
+                "info",
             )
         else:
             kiosk_barcode.visible = False
-            update_kiosk_status(
-                step=1,
-                message=f"Workflow `{station['workflow_type']}` ist konfiguriert.",
+            update_kiosk_status(step=1)
+            set_message(
+                kiosk_message,
+                f"Workflow `{station['workflow_type']}` ist konfiguriert.",
+                "info",
             )
         kiosk_summary.object = kiosk_station_summary(station)
-        kiosk_message.visible = False
 
     def build_kiosk_measurement_form(station: dict[str, Any]) -> None:
         kiosk_measurement_inputs.clear()
@@ -1371,7 +1370,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         barcode = kiosk_barcode.value.strip()
         if not barcode:
             set_message(kiosk_message, "Bitte zuerst einen Barcode scannen.", "warning")
-            update_kiosk_status(step=1, message="Warte auf Barcode.")
+            update_kiosk_status(step=1)
             return
         if len(barcode) > 120:
             set_message(kiosk_message, "Der Barcode ist zu lang.", "danger")
@@ -1409,6 +1408,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 "station_name": existing.station.name if existing.station else "andere Station",
             }
             kiosk_message.object = (
+                "<div style='font-size:24px;line-height:1.3;margin-bottom:10px'>"
+                "Vorhandene Messung gefunden."
+                "</div>"
                 "<div style='font-size:22px;line-height:1.3;font-weight:700'>"
                 f"Vorhandene Messung: {kiosk_pending_existing_measurement['value_text']}"
                 "</div>"
@@ -1421,7 +1423,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             kiosk_message.visible = True
             kiosk_keep_measurement_button.visible = True
             kiosk_new_measurement_button.visible = True
-            update_kiosk_status(step=2, message="Vorhandene Messung gefunden.")
+            update_kiosk_status(step=2)
             return
 
         request_kiosk_measurement()
@@ -1460,12 +1462,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 "danger",
             )
             return
-        update_kiosk_status(
-            step=2,
-            message=(
-                f"Barcode `{kiosk_current_barcode}` erfasst. Messgerät wird abgefragt."
-            ),
-        )
+        update_kiosk_status(step=2)
         set_message(kiosk_message, "Barcode erfasst. Warte auf neuen Messwert...", "info")
         check_kiosk_measurement()
 
@@ -1480,10 +1477,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
         kiosk_check_measurement_button.disabled = True
-        update_kiosk_status(
-            step=1,
-            message="Messung übernommen. Nächste Rückmeldenummer scannen.",
-        )
+        update_kiosk_status(step=1)
 
     def check_kiosk_measurement(_: object | None = None) -> None:
         nonlocal kiosk_current_barcode, kiosk_waiting_for_new_measurement
@@ -1534,7 +1528,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     ),
                     "info",
                 )
-                update_kiosk_status(step=2, message=waiting_text)
+                update_kiosk_status(step=2)
             else:
                 set_message(
                     kiosk_message,
@@ -1543,7 +1537,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     ),
                     "warning",
                 )
-                update_kiosk_status(step=2, message="Warte auf Messwert vom Gerät.")
+                update_kiosk_status(step=2)
             return
 
         show_kiosk_measurement_found(measurement_value_text(measurement))
@@ -1555,10 +1549,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         for input_widget in kiosk_measurement_inputs.values():
             input_widget.value = ""
             input_widget.disabled = True
-        update_kiosk_status(
-            step=1,
-            message="Messung gespeichert. Nächste Rückmeldenummer scannen.",
-        )
+        update_kiosk_status(step=1)
 
     def show_kiosk_measurement_found(value_text: str) -> None:
         kiosk_message.object = (
@@ -1641,7 +1632,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             clear_message=False,
         )
 
-    def update_kiosk_status(*, step: int, message: str) -> None:
+    def update_kiosk_status(*, step: int) -> None:
         labels = [
             ("1", "Barcode"),
             ("2", "Messwert"),
@@ -1662,10 +1653,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             )
         kiosk_status.object = (
             "<div style='margin:10px 0 14px 0'>" + "".join(rendered_steps) + "</div>"
-        )
-        kiosk_step_message.object = (
-            "<div style='font-size:24px;margin:0;color:#111827'>"
-            f"{escape(message)}</div>"
         )
 
     station_table.param.watch(select_station, "selection")
@@ -1944,7 +1931,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         ),
         kiosk_barcode,
         pn.Spacer(sizing_mode="stretch_height"),
-        kiosk_step_message,
         kiosk_message,
         pn.Row(
             kiosk_keep_measurement_button,
