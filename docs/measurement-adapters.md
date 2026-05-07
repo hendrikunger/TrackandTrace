@@ -167,7 +167,9 @@ Station-specific fields live on the station record, not in `adapter_config`:
 
 - `scanner_host`: expected scanner IP address, used as a peer filter when set.
 - `scanner_port`: local port the companion listens on. The scanner connects to this port.
-- `scanner_protocol`: informational protocol label such as `Keyence SR-X TCP`.
+- `scanner_protocol`: `Keyence SR-X TCP` enables the current TCP scanner adapter; `none`
+  disables the main scanner. Older `other` values are tolerated by the backend but are not offered in
+  the admin UI because no second scanner implementation exists yet.
 
 The companion automatically builds the scanner listener from these station fields.
 

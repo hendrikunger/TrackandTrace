@@ -90,6 +90,11 @@ WORKFLOW_OPTIONS = {
     "Label printing": "label_printing",
     "Laser marking": "laser_marking",
 }
+SCANNER_PROTOCOL_OPTIONS = {
+    "": "",
+    "Keyence SR-X TCP": "Keyence SR-X TCP",
+    "Disabled": "none",
+}
 
 
 @contextmanager
@@ -274,7 +279,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     scanner_port = pn.widgets.IntInput(name="Listen port", start=0, end=65535, value=0, width=140)
     scanner_protocol = pn.widgets.Select(
         name="Scanner protocol",
-        options=["", "Keyence SR-X TCP", "none", "other"],
+        options=SCANNER_PROTOCOL_OPTIONS,
         width=180,
     )
     workflow_type = pn.widgets.Select(

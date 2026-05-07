@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
 from slf_trace.ui.main import (
+    SCANNER_PROTOCOL_OPTIONS,
     adapter_measurement_type_codes,
     kiosk_missing_progress_labels,
     kiosk_progress_message,
@@ -44,6 +45,15 @@ def test_kiosk_poll_settings_have_fast_defaults() -> None:
     assert positive_poll_period_ms(0, default=250) == 250
     assert positive_poll_period_ms(-1, default=500) == 500
     assert positive_poll_period_ms(125, default=500) == 125
+
+
+def test_scanner_protocol_options_only_offer_supported_modes() -> None:
+    assert SCANNER_PROTOCOL_OPTIONS == {
+        "": "",
+        "Keyence SR-X TCP": "Keyence SR-X TCP",
+        "Disabled": "none",
+    }
+    assert "other" not in SCANNER_PROTOCOL_OPTIONS.values()
 
 
 def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
