@@ -9,7 +9,11 @@ import pytest
 from slf_trace.api.schemas.companion import MeasurementRequest
 from slf_trace.api.services import companion as companion_services
 from slf_trace.companion.adapters.base import (
+    AdapterContext,
+    AdapterState,
+    AdapterStatus,
     BarcodeScanEvent,
+    MeasurementAdapter,
     MeasurementEvent,
     MeasurementEventValue,
 )
@@ -27,10 +31,12 @@ class FakeClient:
         self,
         *,
         fail_first_event: bool = False,
+        fail_station_config_calls: int = 0,
         fail_measurement_request: bool = False,
         fail_heartbeat: bool = False,
     ) -> None:
         self.fail_first_event = fail_first_event
+        self.fail_station_config_calls = fail_station_config_calls
         self.fail_measurement_request = fail_measurement_request
         self.fail_heartbeat = fail_heartbeat
         self.measurement_requests = []
@@ -41,6 +47,9 @@ class FakeClient:
 
     async def fetch_station_config(self, station_id: int):
         self.station_config_calls.append(station_id)
+        if self.fail_station_config_calls > 0:
+            self.fail_station_config_calls -= 1
+            raise httpx.ConnectError("offline")
         return {
             "station_id": station_id,
             "name": "Station 1",
@@ -82,6 +91,24 @@ def _config(state_path: str) -> CompanionRuntimeConfig:
         heartbeat_interval_seconds=0.01,
         outbox_retry_interval_seconds=0.01,
     )
+
+
+class CrashingAdapter(MeasurementAdapter):
+    name = "crashing-adapter"
+
+    def __init__(self) -> None:
+        self.starts = 0
+        self.stopped = False
+
+    async def start(self, context: AdapterContext) -> None:
+        self.starts += 1
+        raise RuntimeError("adapter boom")
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    def health(self) -> AdapterStatus:
+        return AdapterStatus(name=self.name, state=AdapterState.DEGRADED)
 
 
 def test_config_from_settings_requires_station_id() -> None:
@@ -141,6 +168,19 @@ async def test_runtime_fetches_config_and_sends_heartbeat(tmp_path) -> None:
     assert response["status"] == "accepted"
     assert client.station_config_calls == [1]
     assert client.heartbeats[0]["status"] == "online"
+
+
+@pytest.mark.asyncio
+async def test_runtime_bootstrap_retries_station_config_when_api_is_unavailable(
+    tmp_path,
+) -> None:
+    client = FakeClient(fail_station_config_calls=2)
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+
+    await runtime.bootstrap_until_ready()
+
+    assert runtime.station_config is not None
+    assert client.station_config_calls == [1, 1, 1]
 
 
 @pytest.mark.asyncio
@@ -599,6 +639,19 @@ async def test_runtime_syncs_measurement_request_cursor_without_accepting_old_re
 
 
 @pytest.mark.asyncio
+async def test_runtime_sync_cursor_keeps_running_when_server_is_unavailable(tmp_path) -> None:
+    runtime = CompanionRuntime(
+        _config(str(tmp_path / "state.sqlite3")),
+        client=FakeClient(fail_measurement_request=True),
+    )
+
+    await runtime.sync_measurement_request_cursor()
+
+    assert runtime.last_measurement_request_id == 0
+    assert runtime.pending_measurement_request is None
+
+
+@pytest.mark.asyncio
 async def test_runtime_keeps_running_when_measurement_request_poll_fails(tmp_path) -> None:
     runtime = CompanionRuntime(
         _config(str(tmp_path / "state.sqlite3")),
@@ -622,6 +675,35 @@ async def test_runtime_heartbeat_loop_keeps_running_when_server_is_unavailable(t
 
     assert not task.done() or task.cancelled()
     assert client.heartbeats == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_adapter_supervisor_restarts_crashing_adapter(tmp_path) -> None:
+    adapter = CrashingAdapter()
+    runtime = CompanionRuntime(
+        _config(str(tmp_path / "state.sqlite3")),
+        client=FakeClient(),
+        adapters=[adapter],
+    )
+    context = AdapterContext(
+        station_id=1,
+        emit=runtime.handle_adapter_event,
+        parser_config=runtime._parser_config_from_station_config(),
+    )
+
+    task = asyncio.create_task(runtime.run_adapter_supervisor(adapter, context))
+    await asyncio.sleep(0.03)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    queued = runtime.outbox.pending()
+    assert adapter.starts > 1
+    assert queued[0].endpoint == "/api/companion/events"
+    assert queued[0].payload["event_type"] == "adapter.failure"
+    assert queued[0].payload["context"] == {
+        "adapter": "crashing-adapter",
+        "error": "RuntimeError",
+    }
 
 
 @pytest.mark.asyncio

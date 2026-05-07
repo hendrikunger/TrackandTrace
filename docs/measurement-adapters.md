@@ -13,6 +13,12 @@ Every adapter implements:
 - `stop()`: request shutdown.
 - `health()`: return an `AdapterStatus` for companion heartbeats.
 
+The companion runtime supervises every adapter independently. Expected connection failures should
+be handled inside the adapter by setting `AdapterState.DEGRADED` and retrying. Unexpected exceptions
+are caught by the runtime supervisor, recorded as `adapter.failure`, and the adapter is started
+again. This means a failed SMB read, TCP disconnect, scanner command error, or serial exception
+should not restart the whole companion app.
+
 `AdapterContext` provides:
 
 - `station_id`: the current station.
@@ -75,6 +81,8 @@ adapter = SimulatorMeasurementAdapter.from_payload(
 
 `TcpLineMeasurementAdapter` connects to a TCP server, reads newline-delimited payloads, parses them,
 and emits canonical measurement events. If the connection drops, it marks itself degraded and retries.
+The runtime supervisor is an extra guard for failures outside the adapter's expected TCP/read/parse
+exceptions.
 
 Station-specific `adapter_config` example:
 
@@ -179,6 +187,8 @@ SMB1 share. It is based on the working station behavior:
 - `pysmb` with SMB2 disabled.
 - `SMBConnection(..., use_ntlm_v2=False, is_direct_tcp=True)` on port 445.
 - reconnect when `echo(b"ping")` fails.
+- keep the polling loop alive when SMB operations raise connection, parse, delete, or library
+  exceptions; adapter health becomes degraded until the next successful poll.
 - poll `/ExcelAusgabe` and select the highest numbered file matching `_(\d+)\.csv$`.
 - decode as `cp1252`, take the last non-empty line, split by `;`, and read a configured column.
 - wait for an active kiosk measurement request before reading a file. This prevents the adapter from

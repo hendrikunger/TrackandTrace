@@ -325,10 +325,19 @@ class CompanionRuntime:
         return True
 
     async def run_forever(self) -> None:
-        await self.fetch_station_config()
+        await self.bootstrap_until_ready()
         self.configure_adapters_from_station_config()
         await self.sync_measurement_request_cursor()
-        await self.send_heartbeat(status="starting")
+        try:
+            await self.send_heartbeat(status="starting")
+        except (httpx.HTTPError, OSError) as exc:
+            logger.warning(
+                "Startup heartbeat failed; companion will keep running",
+                extra={
+                    "station_id": self.config.station_id,
+                    "error": exc.__class__.__name__,
+                },
+            )
 
         tasks = [
             asyncio.create_task(self.run_heartbeat_loop()),
@@ -343,6 +352,21 @@ class CompanionRuntime:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def bootstrap_until_ready(self) -> None:
+        while True:
+            try:
+                await self.fetch_station_config()
+                return
+            except (httpx.HTTPError, OSError) as exc:
+                logger.warning(
+                    "Station config fetch failed; companion will retry",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                await asyncio.sleep(self.config.heartbeat_interval_seconds)
 
     async def stop_adapters(self) -> None:
         await asyncio.gather(
@@ -364,7 +388,46 @@ class CompanionRuntime:
             measurement_needed=self.measurement_needed,
             measurement_type_needed=self.measurement_type_needed,
         )
-        await asyncio.gather(*(adapter.start(context) for adapter in self.adapters))
+        await asyncio.gather(
+            *(self.run_adapter_supervisor(adapter, context) for adapter in self.adapters)
+        )
+
+    async def run_adapter_supervisor(
+        self,
+        adapter: MeasurementAdapter,
+        context: AdapterContext,
+    ) -> None:
+        while True:
+            try:
+                await adapter.start(context)
+                logger.warning(
+                    "Adapter stopped unexpectedly; companion will restart it",
+                    extra={"station_id": self.config.station_id, "adapter": adapter.name},
+                )
+                self.enqueue_station_event(
+                    event_type="adapter.stopped",
+                    severity="warning",
+                    message="Adapter stopped unexpectedly and will be restarted.",
+                    context={"adapter": adapter.name},
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - adapter libraries raise mixed errors.
+                logger.exception(
+                    "Adapter crashed; companion will restart it",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "adapter": adapter.name,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                self.enqueue_station_event(
+                    event_type="adapter.failure",
+                    severity="error",
+                    message="Adapter crashed and will be restarted.",
+                    context={"adapter": adapter.name, "error": exc.__class__.__name__},
+                )
+            await asyncio.sleep(self.config.outbox_retry_interval_seconds)
 
     async def run_heartbeat_loop(self) -> None:
         while True:
@@ -382,22 +445,51 @@ class CompanionRuntime:
 
     async def run_outbox_loop(self) -> None:
         while True:
-            await self.flush_outbox_once()
+            try:
+                await self.flush_outbox_once()
+            except Exception as exc:  # noqa: BLE001 - local state errors should not stop runtime.
+                logger.exception(
+                    "Outbox flush failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
             await asyncio.sleep(self.config.outbox_retry_interval_seconds)
 
     async def run_measurement_request_loop(self) -> None:
         while True:
-            await self.fetch_measurement_request_once()
-            if self.pending_request_timed_out():
-                self.submit_pending_measurement(reason="timeout")
+            try:
+                await self.fetch_measurement_request_once()
+                if self.pending_request_timed_out():
+                    self.submit_pending_measurement(reason="timeout")
+            except Exception as exc:  # noqa: BLE001 - polling loop is a process safety boundary.
+                logger.exception(
+                    "Measurement request loop failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
             await asyncio.sleep(0.5)
 
     async def sync_measurement_request_cursor(self, *, max_requests: int = 1000) -> None:
         for _ in range(max_requests):
-            request = await self.client.fetch_measurement_request(
-                self.config.station_id,
-                self.last_measurement_request_id,
-            )
+            try:
+                request = await self.client.fetch_measurement_request(
+                    self.config.station_id,
+                    self.last_measurement_request_id,
+                )
+            except (httpx.HTTPError, OSError) as exc:
+                logger.warning(
+                    "Measurement request cursor sync failed; companion will continue",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "request_id": self.last_measurement_request_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                return
             request_id = request.get("request_id")
             if request_id is None:
                 return

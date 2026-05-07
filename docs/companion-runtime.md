@@ -33,6 +33,17 @@ The runtime:
 - writes rotating companion logs to `COMPANION_LOG_PATH` when configured
 - can submit diagnostics events to `/api/companion/events`
 
+The companion should survive normal outage conditions without process exits. During startup it
+retries station config bootstrap until the API responds. After bootstrap, heartbeat failures,
+measurement-request poll failures, startup heartbeat failures, and outbox send failures are logged
+and retried instead of escaping the runtime loop. This prevents service restart churn while the API
+VM is restarted or a network path drops.
+
+Adapter tasks are supervised separately. If one TCP, SMB, scanner, serial, or simulator adapter
+raises unexpectedly, the runtime queues an `adapter.failure` diagnostic event and restarts that
+adapter without stopping the other adapters or the companion process. If an adapter returns from
+`start(...)` without a stop request, the runtime queues `adapter.stopped` and starts it again.
+
 ## Measurement Requests
 
 Barcode scans create measurement requests in the central API. The companion polls those requests and
@@ -69,3 +80,6 @@ The outbox is a SQLite database at `COMPANION_STATE_PATH`. It stores:
 
 Adapter implementations should enqueue retryable events instead of dropping them when the network
 or central API is unavailable.
+
+Adapter implementations should still catch expected device failures locally and report degraded
+health. The runtime supervisor is the final safety boundary for unexpected exceptions.
