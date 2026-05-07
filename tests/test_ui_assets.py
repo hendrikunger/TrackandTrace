@@ -12,6 +12,7 @@ from slf_trace.ui.main import (
     measurement_value_html,
     measurement_value_text,
     resolve_kiosk_station_id,
+    split_measurement_display_value,
 )
 
 
@@ -82,13 +83,22 @@ def test_measurement_value_html_renders_each_value_on_own_line() -> None:
     html = measurement_value_html(measurement, station)
 
     assert html.count("slf-kiosk-value-row") == 2
-    assert "column-gap:28px" in html
+    assert "slf-kiosk-value-comma" in html
+    assert "font-variant-numeric:tabular-nums" in html
     assert "font-size:28px" in html
     assert "font-size:34px" in html
     assert ">Breite</span>" in html
-    assert ">32,2000 mm</span>" in html
+    assert ">32</span>" in html
+    assert ">2000</span>" in html
     assert ">Innenring</span>" in html
-    assert ">45,0000 mm</span>" in html
+    assert ">45</span>" in html
+    assert ">0000</span>" in html
+    assert ">mm</span>" in html
+
+
+def test_split_measurement_display_value_keeps_decimal_separator_in_own_column() -> None:
+    assert split_measurement_display_value("32,2000 mm") == ("32", ",", "2000", "mm")
+    assert split_measurement_display_value("45 mm") == ("45", "", "", "mm")
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
@@ -151,7 +161,9 @@ def test_kiosk_progress_helpers_format_received_values() -> None:
 
     assert kiosk_progress_value_text(progress["values"][0]) == "77,7 mm"
     assert kiosk_missing_progress_labels(progress, station) == ["Innenring"]
-    assert (
-        "Erledigt: Breite: 77,7 mm"
-        in kiosk_progress_message(progress, station, "Warte auf Innenring.")
-    )
+    message = kiosk_progress_message(progress, station, "Warte auf Innenring.")
+    assert "Erledigt:" in message
+    assert ">Breite</span>" in message
+    assert ">77</span>" in message
+    assert ">7</span>" in message
+    assert "Warte auf Innenring." in message

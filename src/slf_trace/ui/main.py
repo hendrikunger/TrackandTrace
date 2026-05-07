@@ -612,7 +612,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     loading_adapter_form = False
 
     def set_message(pane: pn.pane.Alert, text: str, alert_type: str = "info") -> None:
-        pane.object = text
+        if pane is kiosk_message and not text.lstrip().startswith("<"):
+            pane.object = kiosk_operator_message_html(text)
+        else:
+            pane.object = text
         pane.alert_type = alert_type
         pane.visible = True
 
@@ -1442,11 +1445,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 "station_name": existing.station.name if existing.station else "andere Station",
             }
             kiosk_message.object = (
-                "<div style='font-size:24px;line-height:1.3;font-weight:700;margin-bottom:4px'>"
+                "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
                 "Vorhandene Messung:"
                 "</div>"
                 f"{kiosk_pending_existing_measurement['value_html']}"
-                "<div style='font-size:16px;margin-top:8px'>"
+                "<div style='font-size:22px;line-height:1.3;margin-top:12px'>"
                 f"Quelle: {escape(kiosk_pending_existing_measurement['station_name'])}. "
                 "Wert behalten oder neu vom Messgerät laden?"
                 "</div>"
@@ -1590,7 +1593,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def show_kiosk_measurement_found(value_html: str) -> None:
         kiosk_message.object = (
-            "<div style='font-size:28px;line-height:1.25;font-weight:700;margin-bottom:4px'>"
+            "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
             "Letzte Messung:"
             "</div>"
             f"{value_html}"
@@ -2294,24 +2297,64 @@ def measurement_value_text(measurement: Measurement, station: dict[str, Any] | N
     )
 
 
+def kiosk_operator_message_html(text: str) -> str:
+    return (
+        "<div style='font-size:28px;line-height:1.25;font-weight:800'>"
+        f"{escape(text)}"
+        "</div>"
+    )
+
+
 def measurement_value_html(measurement: Measurement, station: dict[str, Any] | None = None) -> str:
+    return measurement_values_html(measurement_value_lines(measurement, station))
+
+
+def measurement_values_html(value_lines: list[tuple[str, str]]) -> str:
     rows = []
-    for label, value_text in measurement_value_lines(measurement, station):
+    for label, value_text in value_lines:
+        integer_part, decimal_mark, fraction_part, unit = split_measurement_display_value(
+            value_text
+        )
         rows.append(
             "<div class='slf-kiosk-value-row' "
-            "style='display:grid;grid-template-columns:minmax(180px,max-content) minmax(0,1fr);"
-            "column-gap:28px;row-gap:8px;align-items:baseline;margin-top:8px'>"
+            "style='display:grid;grid-template-columns:minmax(180px,max-content) "
+            "minmax(72px,max-content) 14px minmax(86px,max-content) max-content;"
+            "column-gap:8px;row-gap:8px;align-items:baseline;margin-top:8px;"
+            "font-variant-numeric:tabular-nums'>"
             f"<span class='slf-kiosk-value-label' "
-            "style='font-size:28px;line-height:1.25;font-weight:800;overflow-wrap:anywhere'>"
+            "style='font-size:28px;line-height:1.25;font-weight:800;overflow-wrap:anywhere;"
+            "padding-right:20px'>"
             f"{escape(label)}</span>"
-            f"<span class='slf-kiosk-value-number' "
-            "style='font-size:34px;line-height:1.2;font-weight:800;overflow-wrap:anywhere'>"
-            f"{escape(value_text)}</span>"
+            "<span class='slf-kiosk-value-integer' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:right'>"
+            f"{escape(integer_part)}</span>"
+            "<span class='slf-kiosk-value-comma' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:center'>"
+            f"{escape(decimal_mark)}</span>"
+            "<span class='slf-kiosk-value-fraction' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:left'>"
+            f"{escape(fraction_part)}</span>"
+            "<span class='slf-kiosk-value-unit' "
+            "style='font-size:28px;line-height:1.25;font-weight:700;padding-left:12px'>"
+            f"{escape(unit)}</span>"
             "</div>"
         )
     return "<div class='slf-kiosk-values' style='display:grid;gap:8px;margin-top:10px'>" + "".join(
         rows
     ) + "</div>"
+
+
+def split_measurement_display_value(value_text: str) -> tuple[str, str, str, str]:
+    parts = value_text.strip().split()
+    numeric_text = parts[0] if parts else ""
+    unit = " ".join(parts[1:])
+    if "," in numeric_text:
+        integer_part, fraction_part = numeric_text.split(",", 1)
+        return integer_part, ",", fraction_part, unit
+    if "." in numeric_text:
+        integer_part, fraction_part = numeric_text.split(".", 1)
+        return integer_part, ".", fraction_part, unit
+    return numeric_text, "", "", unit
 
 
 def measurement_value_lines(
@@ -2389,15 +2432,13 @@ def kiosk_progress_message(
     for value in values:
         measurement_type = str(value.get("measurement_type") or "")
         label = label_by_code.get(measurement_type, measurement_type)
-        rendered_values.append(
-            f"{escape(label)}: {escape(kiosk_progress_value_text(value))}"
-        )
-    value_text = ", ".join(rendered_values)
+        rendered_values.append((label, kiosk_progress_value_text(value)))
     return (
-        "<div style='font-size:22px;line-height:1.3;font-weight:700'>"
-        f"Erledigt: {value_text}"
+        "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
+        "Erledigt:"
         "</div>"
-        "<div style='font-size:16px;margin-top:8px'>"
+        f"{measurement_values_html(rendered_values)}"
+        "<div style='font-size:22px;line-height:1.3;margin-top:12px'>"
         f"{escape(waiting_text)}"
         "</div>"
     )
