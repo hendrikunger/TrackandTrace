@@ -264,11 +264,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         button_type="primary",
         width=180,
     )
-    measurement_type_save_button = pn.widgets.Button(
-        name="Save measurement type",
-        button_type="success",
-        width=190,
-    )
     measurement_type_message = pn.pane.Alert("", alert_type="info", visible=False)
     station_name_status = pn.pane.Markdown(
         "Select a station to review configuration.",
@@ -651,6 +646,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     workflow_config_value: dict[str, Any] = {}
     selected_history: dict[int, list[dict[str, Any]]] = {}
     loading_station_form = False
+    loading_measurement_type_form = False
     loading_adapter_form = False
 
     def set_message(pane: pn.pane.Alert, text: str, alert_type: str = "info") -> None:
@@ -666,7 +662,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         create_station_button.visible = enabled
         cancel_station_button.visible = enabled
 
-    def refresh_measurement_types(clear_message: bool = True) -> None:
+    def refresh_measurement_types(
+        clear_message: bool = True,
+        *,
+        select_code: str | None = None,
+    ) -> None:
         nonlocal measurement_type_rows
         try:
             with session_scope(settings) as session:
@@ -686,22 +686,31 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         adapter_measurement_type.options = active_type_options
         if active_type_options and adapter_measurement_type.value not in active_type_options:
             adapter_measurement_type.value = active_type_options[0]
+        if select_code is not None:
+            matching_rows = measurement_type_table.value.index[
+                measurement_type_table.value["code"] == select_code
+            ].tolist()
+            measurement_type_table.selection = matching_rows[:1]
         if clear_message:
             measurement_type_message.visible = False
 
     def clear_measurement_type_form(_: object | None = None) -> None:
-        nonlocal selected_measurement_type_code
-        selected_measurement_type_code = None
-        measurement_type_table.selection = []
-        measurement_type_code.disabled = False
-        measurement_type_code.value = ""
-        measurement_type_label.value = ""
-        measurement_type_unit.value = "mm"
-        measurement_type_active.value = True
-        measurement_type_message.visible = False
+        nonlocal selected_measurement_type_code, loading_measurement_type_form
+        loading_measurement_type_form = True
+        try:
+            selected_measurement_type_code = None
+            measurement_type_table.selection = []
+            measurement_type_code.disabled = False
+            measurement_type_code.value = ""
+            measurement_type_label.value = ""
+            measurement_type_unit.value = "mm"
+            measurement_type_active.value = True
+            measurement_type_message.visible = False
+        finally:
+            loading_measurement_type_form = False
 
     def select_measurement_type(event: Any) -> None:
-        nonlocal selected_measurement_type_code
+        nonlocal selected_measurement_type_code, loading_measurement_type_form
         if not event.new:
             return
         row_index = event.new[0]
@@ -709,25 +718,34 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             return
 
         row = measurement_type_table.value.iloc[row_index]
-        selected_measurement_type_code = str(row["code"])
-        measurement_type_code.value = selected_measurement_type_code
-        measurement_type_code.disabled = True
-        measurement_type_label.value = str(row["label"] or "")
-        measurement_type_unit.value = str(row["unit"] or "")
-        measurement_type_active.value = bool(row["active"])
-        measurement_type_message.visible = False
+        loading_measurement_type_form = True
+        try:
+            selected_measurement_type_code = str(row["code"])
+            measurement_type_code.value = selected_measurement_type_code
+            measurement_type_code.disabled = True
+            measurement_type_label.value = str(row["label"] or "")
+            measurement_type_unit.value = str(row["unit"] or "")
+            measurement_type_active.value = bool(row["active"])
+            measurement_type_message.visible = False
+        finally:
+            loading_measurement_type_form = False
 
-    def save_measurement_type(_: object | None = None) -> None:
+    def autosave_measurement_type(_: object | None = None) -> None:
         nonlocal selected_measurement_type_code
+        if loading_measurement_type_form:
+            return
+
         code = measurement_type_code.value.strip().lower().replace(" ", "_")
         label = measurement_type_label.value.strip()
         unit = measurement_type_unit.value.strip() or None
 
-        if not code:
-            set_message(measurement_type_message, "Code is required.", "warning")
-            return
-        if not label:
-            set_message(measurement_type_message, "Label is required.", "warning")
+        if not code or not label:
+            if selected_measurement_type_code is not None:
+                set_message(
+                    measurement_type_message,
+                    "Code and label are required.",
+                    "warning",
+                )
             return
 
         try:
@@ -754,9 +772,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
         measurement_type_code.value = selected_measurement_type_code or code
         measurement_type_code.disabled = True
-        refresh_measurement_types(clear_message=False)
+        refresh_measurement_types(
+            clear_message=False,
+            select_code=selected_measurement_type_code,
+        )
         refresh_stations(clear_message=False)
-        set_message(measurement_type_message, "Measurement type saved.", "success")
+        set_message(measurement_type_message, "Measurement type autosaved.", "success")
 
     def refresh_stations(
         _: object | None = None,
@@ -1834,7 +1855,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_station.param.watch(load_kiosk_station, "value")
     refresh_button.on_click(refresh_stations)
     measurement_type_new_button.on_click(clear_measurement_type_form)
-    measurement_type_save_button.on_click(save_measurement_type)
     new_station_button.on_click(start_new_station)
     create_station_button.on_click(create_station_from_form)
     cancel_station_button.on_click(cancel_new_station)
@@ -1871,6 +1891,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         active,
     ):
         field_widget.param.watch(autosave_config, "value")
+    for field_widget in (
+        measurement_type_code,
+        measurement_type_label,
+        measurement_type_unit,
+        measurement_type_active,
+    ):
+        field_widget.param.watch(autosave_measurement_type, "value")
     for adapter_widget in (
         adapter_enabled,
         adapter_type,
@@ -2093,7 +2120,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     measurement_types_panel = pn.Column(
         pn.Row(
             measurement_type_new_button,
-            measurement_type_save_button,
             sizing_mode="stretch_width",
         ),
         measurement_type_table,
