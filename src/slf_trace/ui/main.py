@@ -1404,14 +1404,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
         if existing is not None:
             kiosk_pending_existing_measurement = {
-                "value_text": measurement_value_text(existing),
+                "value_text": measurement_value_text(
+                    existing,
+                    station_row_by_id(kiosk_current_station_id),
+                ),
                 "station_name": existing.station.name if existing.station else "andere Station",
             }
             kiosk_message.object = (
-                "<div style='font-size:24px;line-height:1.3;margin-bottom:10px'>"
-                "Vorhandene Messung gefunden."
-                "</div>"
-                "<div style='font-size:22px;line-height:1.3;font-weight:700'>"
+                "<div style='font-size:24px;line-height:1.3;font-weight:700'>"
                 f"Vorhandene Messung: {kiosk_pending_existing_measurement['value_text']}"
                 "</div>"
                 "<div style='font-size:16px;margin-top:8px'>"
@@ -1540,7 +1540,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 update_kiosk_status(step=2)
             return
 
-        show_kiosk_measurement_found(measurement_value_text(measurement))
+        show_kiosk_measurement_found(
+            measurement_value_text(
+                measurement,
+                station_row_by_id(kiosk_current_station_id),
+            )
+        )
         kiosk_barcode.value = ""
         kiosk_current_barcode = None
         kiosk_waiting_for_new_measurement = False
@@ -2249,9 +2254,17 @@ def load_latest_measurement_for_station_type(
     return None
 
 
-def measurement_value_text(measurement: Measurement) -> str:
+def measurement_value_text(measurement: Measurement, station: dict[str, Any] | None = None) -> str:
+    label_by_code = {
+        str(detail.get("code")): str(detail.get("label") or detail.get("code"))
+        for detail in (station or {}).get("measurement_type_details", [])
+        if detail.get("code")
+    }
     return ", ".join(
-        f"{value.value} {value.unit or ''}".strip()
+        (
+            f"{label_by_code.get(value.measurement_type, value.measurement_type)}: "
+            f"{str(value.value).replace('.', ',')} {value.unit or ''}"
+        ).strip()
         for value in sorted(measurement.values, key=lambda item: item.measurement_type)
     )
 

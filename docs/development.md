@@ -83,6 +83,9 @@ cd /opt/slf-trace/src/TrackandTrace
 echo apitest | sudo -S -p "" deploy/update-test-server.sh
 ```
 
+Use this for API, admin UI, and kiosk UI changes. Do not SSH to or restart the station for UI-only
+changes; the kiosk is served centrally from `api.home.io`.
+
 Check service state:
 
 ```bash
@@ -94,7 +97,7 @@ journalctl -u slf-trace-ui.service -n 100 --no-pager
 
 ### Ubuntu Test Station
 
-- Host/IP: `10.0.0.196`
+- Host/IP: `10.0.0.197`
 - SSH user: `u1`
 - Sudo password: `u1`
 - Repo checkout: `/opt/slf-trace/src/TrackandTrace`
@@ -108,10 +111,12 @@ journalctl -u slf-trace-ui.service -n 100 --no-pager
 Connect:
 
 ```bash
-ssh u1@10.0.0.196
+ssh u1@10.0.0.197
 ```
 
-Update the station from git and restart the companion/kiosk services:
+Update the station from git and restart the companion/kiosk services only when station-side code or
+service setup changed, for example scanner, measurement adapters, companion runtime, kiosk browser
+launcher, or systemd units. Do not run this for API, admin UI, or central kiosk UI changes.
 
 ```bash
 cd /opt/slf-trace/src/TrackandTrace

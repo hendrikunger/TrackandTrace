@@ -1,3 +1,6 @@
+from decimal import Decimal
+from types import SimpleNamespace
+
 from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
 from slf_trace.ui.main import (
@@ -6,6 +9,7 @@ from slf_trace.ui.main import (
     kiosk_progress_message,
     kiosk_progress_value_text,
     kiosk_workflow_title,
+    measurement_value_text,
     resolve_kiosk_station_id,
 )
 
@@ -39,6 +43,25 @@ def test_adapter_measurement_type_codes_use_enabled_adapters_only() -> None:
             {"enabled": True, "measurement_type": " "},
         ]
     ) == ["breite"]
+
+
+def test_measurement_value_text_labels_values_by_measurement_type() -> None:
+    measurement = SimpleNamespace(
+        values=[
+            SimpleNamespace(measurement_type="innenring", value=Decimal("45.0000"), unit="mm"),
+            SimpleNamespace(measurement_type="breite", value=Decimal("32.2000"), unit="mm"),
+        ]
+    )
+    station = {
+        "measurement_type_details": [
+            {"code": "breite", "label": "Breite"},
+            {"code": "innenring", "label": "Innenring"},
+        ]
+    }
+
+    assert measurement_value_text(measurement, station) == (
+        "Breite: 32,2000 mm, Innenring: 45,0000 mm"
+    )
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
