@@ -21,7 +21,7 @@ Open the central server UI in Microsoft Edge kiosk mode for the station user. Do
 Panel UI on production stations.
 
 ```powershell
-$Url = "http://<server-host>:5006/kiosk?station_id=1"
+$Url = "http://<server-host>:8080/kiosk?station_id=1"
 Start-Process "msedge.exe" -ArgumentList "--kiosk $Url --edge-kiosk-type=fullscreen --no-first-run"
 ```
 
@@ -35,7 +35,7 @@ locally, but does not run `slf-trace-ui.service` in production.
 
 ```bash
 chromium --kiosk --no-first-run --disable-infobars \
-  "http://<server-host>:5006/kiosk?station_id=1"
+  "http://<server-host>:8080/kiosk?station_id=1"
 ```
 
 For unattended startup, add the command to the dedicated user's desktop autostart entry, for
@@ -45,9 +45,9 @@ example `~/.config/autostart/slf-trace-kiosk.desktop`:
 [Desktop Entry]
 Type=Application
 Name=SLF Trace Kiosk
-Exec=chromium --kiosk --no-first-run --disable-infobars http://<server-host>:5006/kiosk?station_id=1
+Exec=chromium --kiosk --no-first-run --disable-infobars http://<server-host>:8080/kiosk?station_id=1
 X-GNOME-Autostart-enabled=true
 ```
 
-Keep admin access separate by opening `http://<server-host>:5006/app` manually with a
+Keep admin access separate by opening `http://<server-host>:8080/app` manually with a
 keyboard/admin session.

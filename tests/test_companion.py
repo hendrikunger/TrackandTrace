@@ -35,11 +35,13 @@ class FakeClient:
         self,
         *,
         fail_first_event: bool = False,
+        fail_barcode_scan: bool = False,
         fail_station_config_calls: int = 0,
         fail_measurement_request: bool = False,
         fail_heartbeat: bool = False,
     ) -> None:
         self.fail_first_event = fail_first_event
+        self.fail_barcode_scan = fail_barcode_scan
         self.fail_station_config_calls = fail_station_config_calls
         self.fail_measurement_request = fail_measurement_request
         self.fail_heartbeat = fail_heartbeat
@@ -78,6 +80,8 @@ class FakeClient:
         return {"status": "accepted", "heartbeat_id": 1, "station_id": payload["station_id"]}
 
     async def post_event(self, endpoint, payload):
+        if self.fail_barcode_scan and endpoint == "/api/companion/barcode-scans":
+            raise httpx.ConnectError("offline")
         if self.fail_first_event:
             self.fail_first_event = False
             raise httpx.ConnectError("offline")
@@ -668,7 +672,8 @@ async def test_runtime_keeps_empty_measurement_request_open_after_timeout(tmp_pa
 
 @pytest.mark.asyncio
 async def test_runtime_barcode_scan_does_not_request_measurement(tmp_path) -> None:
-    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+    client = FakeClient()
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
 
     await runtime.handle_barcode_scan_event(
         BarcodeScanEvent(
@@ -679,6 +684,29 @@ async def test_runtime_barcode_scan_does_not_request_measurement(tmp_path) -> No
     )
 
     assert runtime.latest_rueckmeldenummer is None
+    assert len(client.barcode_scans) == 1
+    assert runtime.outbox.count() == 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_barcode_scan_queues_when_immediate_send_fails(tmp_path) -> None:
+    runtime = CompanionRuntime(
+        _config(str(tmp_path / "state.sqlite3")),
+        client=FakeClient(fail_barcode_scan=True),
+    )
+
+    await runtime.handle_barcode_scan_event(
+        BarcodeScanEvent(
+            station_id=1,
+            source_type="keyence_srx",
+            rueckmeldenummer="RM-SCAN",
+        )
+    )
+
+    queued = runtime.outbox.pending()
+    assert len(queued) == 1
+    assert queued[0].endpoint == "/api/companion/barcode-scans"
+    assert queued[0].payload["rueckmeldenummer"] == "RM-SCAN"
 
 
 @pytest.mark.asyncio

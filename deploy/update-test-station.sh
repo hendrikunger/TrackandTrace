@@ -81,19 +81,22 @@ systemctl is-active slf-trace-companion.service
 
 server_url="$(sed -n 's/^SERVER_URL=//p' "$PANEL_ENV" | tail -n 1)"
 station_id="$(sed -n 's/^STATION_ID=//p' "$PANEL_ENV" | tail -n 1)"
+ui_port="$(sed -n 's/^UI_PORT=//p' "$PANEL_ENV" | tail -n 1)"
+ui_port="${ui_port:-8080}"
 if [[ -n "$server_url" && -n "$station_id" ]]; then
-  kiosk_base_url="$(python3 - "$server_url" <<'PY'
+  kiosk_base_url="$(python3 - "$server_url" "$ui_port" <<'PY'
 from urllib.parse import urlsplit, urlunsplit
 import sys
 
 url = sys.argv[1]
+ui_port = sys.argv[2]
 parts = urlsplit(url)
 if not parts.scheme or not parts.hostname:
     raise SystemExit(0)
 host = parts.hostname
 if ":" in host and not host.startswith("["):
     host = f"[{host}]"
-print(urlunsplit((parts.scheme, f"{host}:5006", "", "", "")))
+print(urlunsplit((parts.scheme, f"{host}:{ui_port}", "", "", "")))
 PY
 )"
   if [[ -n "$kiosk_base_url" ]]; then

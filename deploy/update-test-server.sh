@@ -96,7 +96,7 @@ if systemctl list-unit-files slf-trace-ui.service >/dev/null 2>&1; then
   systemctl is-active slf-trace-ui.service
 fi
 
-health_url="http://127.0.0.1:${APP_PORT:-8000}/health?database=false"
+health_url="http://127.0.0.1:${APP_PORT:-8081}/health?database=false"
 echo "Checking $health_url"
 for attempt in $(seq 1 30); do
   if curl -fsS "$health_url"; then

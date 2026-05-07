@@ -16,7 +16,7 @@ Each station then needs a local token:
 
 ```env
 STATION_ID=3
-SERVER_URL=http://api.home.io:8000
+SERVER_URL=http://api.home.io:8081
 STATION_TOKEN=<generated-token>
 ```
 

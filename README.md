@@ -60,7 +60,8 @@ cp .env.example .env
 Local `.env` files are ignored by git. The important values are:
 
 - `APP_HOST` and `APP_PORT` for the FastAPI server bind address.
-- `UI_HOST`, `UI_PORT`, and `UI_AUTORELOAD` for the Panel supervisor/admin UI.
+- `UI_HOST`, `UI_PORT`, `UI_AUTORELOAD`, and optional `UI_WEBSOCKET_ORIGINS` for the Panel
+  supervisor/admin UI.
 - `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, and `DATABASE_PASSWORD` for
   the PostgreSQL database.
 - `STATION_ID` and `SERVER_URL` when running a station companion process.
@@ -77,11 +78,11 @@ Start the API:
 slf-trace-api
 ```
 
-By default, the API listens on `http://localhost:8000`. Useful URLs:
+By default, the API listens on `http://localhost:8081`. Useful URLs:
 
-- `http://localhost:8000/health?database=false` checks the service without touching PostgreSQL.
-- `http://localhost:8000/health` checks the service and database connection.
-- `http://localhost:8000/docs` opens the FastAPI Swagger UI.
+- `http://localhost:8081/health?database=false` checks the service without touching PostgreSQL.
+- `http://localhost:8081/health` checks the service and database connection.
+- `http://localhost:8081/docs` opens the FastAPI Swagger UI.
 
 Start the supervisor/admin UI in a second terminal:
 

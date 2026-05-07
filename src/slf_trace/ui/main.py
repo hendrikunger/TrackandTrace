@@ -89,6 +89,11 @@ WORKFLOW_OPTIONS = {
     "Label printing": "label_printing",
     "Laser marking": "laser_marking",
 }
+SCANNER_PROTOCOL_OPTIONS = {
+    "": "",
+    "Keyence SR-X TCP": "Keyence SR-X TCP",
+    "Disabled": "none",
+}
 
 
 @contextmanager
@@ -273,7 +278,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     scanner_port = pn.widgets.IntInput(name="Listen port", start=0, end=65535, value=0, width=140)
     scanner_protocol = pn.widgets.Select(
         name="Scanner protocol",
-        options=["", "Keyence SR-X TCP", "none", "other"],
+        options=SCANNER_PROTOCOL_OPTIONS,
         width=180,
     )
     workflow_type = pn.widgets.Select(
@@ -613,7 +618,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     loading_adapter_form = False
 
     def set_message(pane: pn.pane.Alert, text: str, alert_type: str = "info") -> None:
-        pane.object = text
+        if pane is kiosk_message and not text.lstrip().startswith("<"):
+            pane.object = kiosk_operator_message_html(text)
+        else:
+            pane.object = text
         pane.alert_type = alert_type
         pane.visible = True
 
@@ -1441,11 +1449,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 "station_name": existing.station.name if existing.station else "andere Station",
             }
             kiosk_message.object = (
-                "<div style='font-size:24px;line-height:1.3;font-weight:700;margin-bottom:4px'>"
+                "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
                 "Vorhandene Messung:"
                 "</div>"
                 f"{kiosk_pending_existing_measurement['value_html']}"
-                "<div style='font-size:16px;margin-top:8px'>"
+                "<div style='font-size:22px;line-height:1.3;margin-top:12px'>"
                 f"Quelle: {escape(kiosk_pending_existing_measurement['station_name'])}. "
                 "Wert behalten oder neu vom Messgerät laden?"
                 "</div>"
@@ -1589,7 +1597,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def show_kiosk_measurement_found(value_html: str) -> None:
         kiosk_message.object = (
-            "<div style='font-size:28px;line-height:1.25;font-weight:700;margin-bottom:4px'>"
+            "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
             "Letzte Messung:"
             "</div>"
             f"{value_html}"
@@ -1711,8 +1719,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_keep_measurement_button.on_click(keep_kiosk_existing_measurement)
     kiosk_new_measurement_button.on_click(request_kiosk_measurement)
     if kiosk:
-        pn.state.add_periodic_callback(poll_kiosk_scanner_scan, period=1000)
-        pn.state.add_periodic_callback(poll_kiosk_measurement, period=1000)
+        pn.state.add_periodic_callback(
+            poll_kiosk_scanner_scan,
+            period=positive_poll_period_ms(settings.kiosk_scanner_poll_ms, default=250),
+        )
+        pn.state.add_periodic_callback(
+            poll_kiosk_measurement,
+            period=positive_poll_period_ms(settings.kiosk_measurement_poll_ms, default=500),
+        )
     else:
         pn.state.add_periodic_callback(auto_refresh_stations, period=5000)
 
@@ -2296,24 +2310,70 @@ def measurement_value_text(measurement: Measurement, station: dict[str, Any] | N
     )
 
 
+def kiosk_operator_message_html(text: str) -> str:
+    return (
+        "<div style='font-size:28px;line-height:1.25;font-weight:800'>"
+        f"{escape(text)}"
+        "</div>"
+    )
+
+
 def measurement_value_html(measurement: Measurement, station: dict[str, Any] | None = None) -> str:
+    return measurement_values_html(measurement_value_lines(measurement, station))
+
+
+def measurement_values_html(value_lines: list[tuple[str, str]]) -> str:
     rows = []
-    for label, value_text in measurement_value_lines(measurement, station):
+    for label, value_text in value_lines:
+        integer_part, decimal_mark, fraction_part, unit = split_measurement_display_value(
+            value_text
+        )
         rows.append(
             "<div class='slf-kiosk-value-row' "
-            "style='display:grid;grid-template-columns:minmax(180px,max-content) minmax(0,1fr);"
-            "column-gap:28px;row-gap:8px;align-items:baseline;margin-top:8px'>"
+            "style='display:grid;grid-template-columns:minmax(180px,max-content) "
+            "minmax(172px,max-content) max-content;"
+            "column-gap:16px;row-gap:8px;align-items:baseline;margin-top:8px;"
+            "font-variant-numeric:tabular-nums'>"
             f"<span class='slf-kiosk-value-label' "
-            "style='font-size:28px;line-height:1.25;font-weight:800;overflow-wrap:anywhere'>"
+            "style='font-size:28px;line-height:1.25;font-weight:800;overflow-wrap:anywhere;"
+            "padding-right:20px'>"
             f"{escape(label)}</span>"
-            f"<span class='slf-kiosk-value-number' "
-            "style='font-size:34px;line-height:1.2;font-weight:800;overflow-wrap:anywhere'>"
-            f"{escape(value_text)}</span>"
+            "<span class='slf-kiosk-value-number' "
+            "style='display:grid;grid-template-columns:minmax(72px,max-content) max-content "
+            "minmax(86px,max-content);column-gap:0;align-items:baseline'>"
+            "<span class='slf-kiosk-value-integer' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:right'>"
+            f"{escape(integer_part)}</span>"
+            "<span class='slf-kiosk-value-comma' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:center'>"
+            f"{escape(decimal_mark)}</span>"
+            "<span class='slf-kiosk-value-fraction' "
+            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:left'>"
+            f"{escape(fraction_part)}</span>"
+            "</span>"
+            "<span class='slf-kiosk-value-unit' "
+            "style='font-size:28px;line-height:1.25;font-weight:700'>"
+            f"{escape(unit)}</span>"
             "</div>"
         )
     return "<div class='slf-kiosk-values' style='display:grid;gap:8px;margin-top:10px'>" + "".join(
         rows
     ) + "</div>"
+
+
+def split_measurement_display_value(value_text: str) -> tuple[str, str, str, str]:
+    parts = value_text.strip().split()
+    numeric_text = parts[0] if parts else ""
+    unit = " ".join(parts[1:])
+    try:
+        formatted_number = f"{Decimal(numeric_text.replace(',', '.')):.4f}".replace(".", ",")
+    except InvalidOperation:
+        formatted_number = numeric_text.replace(".", ",")
+
+    if "," not in formatted_number:
+        formatted_number = f"{formatted_number},0000"
+    integer_part, fraction_part = formatted_number.split(",", 1)
+    return integer_part, ",", fraction_part[:4].ljust(4, "0"), unit
 
 
 def measurement_value_lines(
@@ -2358,7 +2418,11 @@ def load_kiosk_measurement_progress(
 
 
 def kiosk_progress_value_text(value: dict[str, Any]) -> str:
-    number = str(value.get("value") or "").replace(".", ",")
+    raw_number = str(value.get("value") or "")
+    try:
+        number = f"{Decimal(raw_number.replace(',', '.')):.4f}".replace(".", ",")
+    except InvalidOperation:
+        number = raw_number.replace(".", ",")
     unit = str(value.get("unit") or "").strip()
     return f"{number} {unit}".strip()
 
@@ -2391,15 +2455,13 @@ def kiosk_progress_message(
     for value in values:
         measurement_type = str(value.get("measurement_type") or "")
         label = label_by_code.get(measurement_type, measurement_type)
-        rendered_values.append(
-            f"{escape(label)}: {escape(kiosk_progress_value_text(value))}"
-        )
-    value_text = ", ".join(rendered_values)
+        rendered_values.append((label, kiosk_progress_value_text(value)))
     return (
-        "<div style='font-size:22px;line-height:1.3;font-weight:700'>"
-        f"Erledigt: {value_text}"
+        "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
+        "Erledigt:"
         "</div>"
-        "<div style='font-size:16px;margin-top:8px'>"
+        f"{measurement_values_html(rendered_values)}"
+        "<div style='font-size:22px;line-height:1.3;margin-top:12px'>"
         f"{escape(waiting_text)}"
         "</div>"
     )
@@ -2720,9 +2782,9 @@ def run() -> None:
             settings.ui_host,
             "--port",
             str(settings.ui_port),
-            "--allow-websocket-origin",
-            ui_websocket_origin(settings),
         ]
+        for origin in ui_websocket_origins(settings):
+            command.extend(["--allow-websocket-origin", origin])
         if settings.ui_autoreload:
             command.append("--dev")
         command.extend([str(app_path), str(kiosk_path)])
@@ -2730,5 +2792,17 @@ def run() -> None:
         subprocess.run(command, check=True)
 
 
-def ui_websocket_origin(settings: Settings) -> str:
-    return f"{settings.ui_host}:{settings.ui_port}"
+def ui_websocket_origins(settings: Settings) -> list[str]:
+    if settings.ui_websocket_origins:
+        return [
+            origin.strip()
+            for origin in settings.ui_websocket_origins.split(",")
+            if origin.strip()
+        ]
+    return [f"{settings.ui_host}:{settings.ui_port}"]
+
+
+def positive_poll_period_ms(value: int | None, *, default: int) -> int:
+    if value is None or value <= 0:
+        return default
+    return value
