@@ -173,7 +173,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
                     message="Measurement emitted" if emitted else "No new SMB file",
                     last_event_at=datetime.now(UTC) if emitted else self._status.last_event_at,
                 )
-            except (OSError, RuntimeError, ValueError, IndexError) as exc:
+            except Exception as exc:  # noqa: BLE001 - SMB libraries raise mixed exception types.
                 self._status = AdapterStatus(
                     name=self.name,
                     state=AdapterState.DEGRADED,
