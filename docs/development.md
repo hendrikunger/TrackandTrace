@@ -86,6 +86,17 @@ echo apitest | sudo -S -p "" deploy/update-test-server.sh
 Use this for API, admin UI, and kiosk UI changes. Do not SSH to or restart the station for UI-only
 changes; the kiosk is served centrally from `api.home.io`.
 
+Important service boundary:
+
+- `deploy/update-test-server.sh` runs only on `api.home.io`.
+- It restarts only `slf-trace-api.service` and `slf-trace-ui.service` on the API VM.
+- It must never restart `slf-trace-companion.service`.
+- The script now refuses to run if `slf-trace-companion.service` is installed on the host, so it
+  cannot be used on a station by mistake.
+- Restarting the API or Panel UI can briefly disconnect the browser/WebSocket and can make admin
+  health look stale for a heartbeat interval. It should not send scanner `LOFF`, drop the Keyence
+  working mode, or restart the station companion.
+
 Check service state:
 
 ```bash

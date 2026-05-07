@@ -329,11 +329,18 @@ The script:
 
 - fetches and fast-forwards the configured branch, defaulting to `origin/main`
 - refuses to continue if the server checkout has local changes
+- refuses to run on a host that has `slf-trace-companion.service` installed, because that host is a
+  station/panel machine rather than the API VM
 - reinstalls the package into `/opt/slf-trace/env`
 - runs `alembic upgrade head`
-- restarts `slf-trace-api.service` and `slf-trace-ui.service`
+- restarts only `slf-trace-api.service` and `slf-trace-ui.service` on the API VM
 - writes an update log under `/opt/slf-trace/logs/`
 - runs a local API health check
+
+This server update does not SSH to stations, does not restart `slf-trace-companion.service`, and
+does not send scanner startup/shutdown commands. It can briefly interrupt the central UI/WebSocket
+and API polling while services restart, so admin health may look stale until the next companion
+heartbeat arrives.
 
 This update route is for the online test server only. Offline production should use versioned
 release bundles so rollback is just a `current` link switch plus service restart.

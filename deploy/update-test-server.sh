@@ -25,6 +25,13 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "Starting SLF Track and Trace test-server update at $STAMP"
 echo "App directory: $APP_DIR"
 echo "Branch: $REMOTE/$BRANCH"
+echo "Scope: API VM only. This script must not run on a station/panel host."
+
+if systemctl list-unit-files slf-trace-companion.service >/dev/null 2>&1; then
+  echo "Refusing to run: slf-trace-companion.service is installed on this host." >&2
+  echo "Use deploy/update-test-station.sh only for station-side companion changes." >&2
+  exit 1
+fi
 
 if [[ ! -d "$APP_DIR/.git" ]]; then
   echo "Expected a git checkout at $APP_DIR." >&2
@@ -76,7 +83,8 @@ source "$SERVER_ENV"
 set +a
 run_as_service_user "$ENV_DIR/bin/alembic" -c alembic.ini upgrade head
 
-echo "Restarting services..."
+echo "Restarting API VM services only: slf-trace-api.service and slf-trace-ui.service."
+echo "This does not contact or restart any station companion service."
 systemctl restart slf-trace-api.service
 if systemctl list-unit-files slf-trace-ui.service >/dev/null 2>&1; then
   systemctl restart slf-trace-ui.service
