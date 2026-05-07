@@ -2563,8 +2563,12 @@ def save_kiosk_measurement(
 
 
 def set_select_value(widget: pn.widgets.Select, value: str) -> None:
-    if value and value not in widget.options:
-        widget.options = [*widget.options, value]
+    options = widget.options
+    if isinstance(options, dict):
+        if value and value not in options.values():
+            widget.options = {**options, value: value}
+    elif value and value not in options:
+        widget.options = [*options, value]
     widget.value = value
 
 

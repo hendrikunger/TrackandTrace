@@ -1,6 +1,8 @@
 from decimal import Decimal
 from types import SimpleNamespace
 
+import panel as pn
+
 from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
 from slf_trace.ui.main import (
@@ -14,6 +16,7 @@ from slf_trace.ui.main import (
     measurement_value_text,
     positive_poll_period_ms,
     resolve_kiosk_station_id,
+    set_select_value,
     split_measurement_display_value,
     ui_websocket_origins,
 )
@@ -54,6 +57,18 @@ def test_scanner_protocol_options_only_offer_supported_modes() -> None:
         "Disabled": "none",
     }
     assert "other" not in SCANNER_PROTOCOL_OPTIONS.values()
+
+
+def test_select_value_does_not_duplicate_dict_option_values() -> None:
+    widget = pn.widgets.Select(
+        options={"Measurement capture": "measurement_capture"},
+        value="measurement_capture",
+    )
+
+    set_select_value(widget, "measurement_capture")
+
+    assert widget.options == {"Measurement capture": "measurement_capture"}
+    assert widget.value == "measurement_capture"
 
 
 def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
