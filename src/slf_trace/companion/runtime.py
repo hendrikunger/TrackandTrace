@@ -368,7 +368,16 @@ class CompanionRuntime:
 
     async def run_heartbeat_loop(self) -> None:
         while True:
-            await self.send_heartbeat(status="online")
+            try:
+                await self.send_heartbeat(status="online")
+            except (httpx.HTTPError, OSError) as exc:
+                logger.warning(
+                    "Heartbeat failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
             await asyncio.sleep(self.config.heartbeat_interval_seconds)
 
     async def run_outbox_loop(self) -> None:
@@ -402,10 +411,21 @@ class CompanionRuntime:
         )
 
     async def fetch_measurement_request_once(self) -> bool:
-        request = await self.client.fetch_measurement_request(
-            self.config.station_id,
-            self.last_measurement_request_id,
-        )
+        try:
+            request = await self.client.fetch_measurement_request(
+                self.config.station_id,
+                self.last_measurement_request_id,
+            )
+        except (httpx.HTTPError, OSError) as exc:
+            logger.warning(
+                "Measurement request poll failed; companion will keep running",
+                extra={
+                    "station_id": self.config.station_id,
+                    "request_id": self.last_measurement_request_id,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            return False
         request_id = request.get("request_id")
         if request_id is None:
             return False

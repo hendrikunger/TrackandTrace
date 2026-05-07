@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -22,8 +23,16 @@ from slf_trace.config import Settings
 
 
 class FakeClient:
-    def __init__(self, *, fail_first_event: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_first_event: bool = False,
+        fail_measurement_request: bool = False,
+        fail_heartbeat: bool = False,
+    ) -> None:
         self.fail_first_event = fail_first_event
+        self.fail_measurement_request = fail_measurement_request
+        self.fail_heartbeat = fail_heartbeat
         self.measurement_requests = []
         self.station_config_calls = []
         self.heartbeats = []
@@ -42,12 +51,16 @@ class FakeClient:
         }
 
     async def fetch_measurement_request(self, station_id: int, after_id: int):
+        if self.fail_measurement_request:
+            raise httpx.ConnectError("offline")
         for request in self.measurement_requests:
             if request["request_id"] > after_id:
                 return request
         return {"request_id": None, "rueckmeldenummer": None}
 
     async def post_heartbeat(self, payload):
+        if self.fail_heartbeat:
+            raise httpx.ConnectError("offline")
         self.heartbeats.append(payload)
         return {"status": "accepted", "heartbeat_id": 1, "station_id": payload["station_id"]}
 
@@ -583,6 +596,32 @@ async def test_runtime_syncs_measurement_request_cursor_without_accepting_old_re
 
     assert runtime.last_measurement_request_id == 4
     assert runtime.latest_rueckmeldenummer is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_running_when_measurement_request_poll_fails(tmp_path) -> None:
+    runtime = CompanionRuntime(
+        _config(str(tmp_path / "state.sqlite3")),
+        client=FakeClient(fail_measurement_request=True),
+    )
+
+    assert not await runtime.fetch_measurement_request_once()
+    assert runtime.last_measurement_request_id == 0
+    assert runtime.pending_measurement_request is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_heartbeat_loop_keeps_running_when_server_is_unavailable(tmp_path) -> None:
+    client = FakeClient(fail_heartbeat=True)
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+
+    task = asyncio.create_task(runtime.run_heartbeat_loop())
+    await asyncio.sleep(0.03)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert not task.done() or task.cancelled()
+    assert client.heartbeats == []
 
 
 @pytest.mark.asyncio
