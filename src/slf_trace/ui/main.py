@@ -253,6 +253,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     measurement_type_label = pn.widgets.TextInput(name="Label", width=260)
     measurement_type_unit = pn.widgets.TextInput(name="Unit", value="mm", width=120)
     measurement_type_active = pn.widgets.Checkbox(name="Active", value=True)
+    measurement_type_active_row = pn.Row(
+        pn.Spacer(width=2),
+        measurement_type_active,
+        height=42,
+        align="center",
+    )
     measurement_type_new_button = pn.widgets.Button(
         name="New measurement type",
         button_type="primary",
@@ -2091,13 +2097,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             sizing_mode="stretch_width",
         ),
         measurement_type_table,
-        pn.GridBox(
-            measurement_type_code,
-            measurement_type_label,
-            measurement_type_unit,
-            measurement_type_active,
-            ncols=2,
-            align="start",
+        pn.Column(
+            measurement_type_active_row,
+            pn.GridBox(
+                measurement_type_code,
+                measurement_type_label,
+                measurement_type_unit,
+                ncols=3,
+                align="start",
+            ),
+            sizing_mode="stretch_width",
         ),
         measurement_type_message,
         sizing_mode="stretch_width",
