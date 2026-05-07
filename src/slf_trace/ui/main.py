@@ -2779,9 +2779,9 @@ def run() -> None:
             settings.ui_host,
             "--port",
             str(settings.ui_port),
-            "--allow-websocket-origin",
-            ui_websocket_origin(settings),
         ]
+        for origin in ui_websocket_origins(settings):
+            command.extend(["--allow-websocket-origin", origin])
         if settings.ui_autoreload:
             command.append("--dev")
         command.extend([str(app_path), str(kiosk_path)])
@@ -2789,5 +2789,11 @@ def run() -> None:
         subprocess.run(command, check=True)
 
 
-def ui_websocket_origin(settings: Settings) -> str:
-    return f"{settings.ui_host}:{settings.ui_port}"
+def ui_websocket_origins(settings: Settings) -> list[str]:
+    if settings.ui_websocket_origins:
+        return [
+            origin.strip()
+            for origin in settings.ui_websocket_origins.split(",")
+            if origin.strip()
+        ]
+    return [f"{settings.ui_host}:{settings.ui_port}"]

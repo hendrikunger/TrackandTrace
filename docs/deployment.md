@@ -126,7 +126,7 @@ This installs `/usr/local/bin/slf-trace-kiosk-browser`, adds an autostart entry 
 creates `/etc/slf-trace/kiosk.env`, and enables GDM automatic login for that user. The launcher opens:
 
 ```text
-http://<central-ui-host>:5006/kiosk?station_id=<STATION_ID>
+http://<central-ui-host>:8080/kiosk?station_id=<STATION_ID>
 ```
 
 using Firefox, Chromium, or Chrome, whichever is installed first in that order.
@@ -137,8 +137,8 @@ Keep secrets in `/etc/slf-trace/panel.env`. The desktop kiosk user reads only
 
 ```dotenv
 STATION_ID=3
-KIOSK_BASE_URL=http://api.home.io:5006
-KIOSK_URL=http://api.home.io:5006/kiosk?station_id=3
+KIOSK_BASE_URL=http://api.home.io:8080
+KIOSK_URL=http://api.home.io:8080/kiosk?station_id=3
 ```
 
 If you are deliberately reinstalling the same `VERSION` during validation, add
@@ -211,7 +211,7 @@ Edit `/etc/slf-trace/panel.env` before starting the services. Minimum values:
 
 ```dotenv
 APP_ENV=production
-SERVER_URL=http://api.home.io:8000
+SERVER_URL=http://api.home.io:8081
 STATION_ID=<station-id>
 STATION_TOKEN=<token-if-api-token-enforcement-is-enabled>
 DATABASE_HOST=<postgres-host>
@@ -227,8 +227,8 @@ Edit `/etc/slf-trace/kiosk.env` for the desktop browser autostart:
 
 ```dotenv
 STATION_ID=<station-id>
-KIOSK_BASE_URL=http://api.home.io:5006
-KIOSK_URL=http://api.home.io:5006/kiosk?station_id=<station-id>
+KIOSK_BASE_URL=http://api.home.io:8080
+KIOSK_URL=http://api.home.io:8080/kiosk?station_id=<station-id>
 ```
 
 Start and validate services:
@@ -238,7 +238,7 @@ sudo systemctl restart slf-trace-companion.service
 systemctl is-active slf-trace-companion.service
 systemctl is-enabled slf-trace-companion.service
 systemctl is-enabled slf-trace-ui.service || true
-curl --max-time 20 -fsS "http://api.home.io:5006/kiosk?station_id=<station-id>" >/tmp/kiosk.html
+curl --max-time 20 -fsS "http://api.home.io:8080/kiosk?station_id=<station-id>" >/tmp/kiosk.html
 journalctl -u slf-trace-companion.service --since "2 minutes ago" --no-pager
 ```
 
@@ -253,7 +253,7 @@ After the station returns:
 ```bash
 systemctl is-active slf-trace-companion.service display-manager
 systemctl is-active slf-trace-ui.service || true
-curl --max-time 20 -fsS "http://api.home.io:5006/kiosk?station_id=<station-id>" >/tmp/kiosk.html
+curl --max-time 20 -fsS "http://api.home.io:8080/kiosk?station_id=<station-id>" >/tmp/kiosk.html
 pgrep -af "firefox|chromium|chrome|slf-trace-kiosk"
 loginctl list-sessions --no-legend
 journalctl -u slf-trace-companion.service --since "5 minutes ago" --no-pager
@@ -465,12 +465,12 @@ real PostgreSQL values.
 7. Smoke check:
 
    ```powershell
-   Invoke-WebRequest http://localhost:8000/health?database=false
-   Invoke-WebRequest http://localhost:8000/health
+   Invoke-WebRequest http://localhost:8081/health?database=false
+   Invoke-WebRequest http://localhost:8081/health
    ```
 
    ```powershell
-   Invoke-WebRequest http://localhost:5006/app
+   Invoke-WebRequest http://localhost:8080/app
    ```
 
 ## Windows Rollback
@@ -495,15 +495,15 @@ downgrade procedure.
 Server:
 
 ```powershell
-Invoke-WebRequest http://localhost:8000/health?database=false
-Invoke-WebRequest http://localhost:8000/health
+Invoke-WebRequest http://localhost:8081/health?database=false
+Invoke-WebRequest http://localhost:8081/health
 ```
 
 Central UI:
 
 ```text
-http://<server-host>:5006/app
-http://<server-host>:5006/kiosk?station_id=1
+http://<server-host>:8080/app
+http://<server-host>:8080/kiosk?station_id=1
 ```
 
 Companion:

@@ -36,7 +36,7 @@ This is the fastest way to make the operator UI show a scanned part and a captur
 
 ```bash
 slf-trace-sim api \
-  --server-url http://localhost:8000 \
+  --server-url http://localhost:8081 \
   --station-id 1 \
   --rueckmeldenummer RM-DEV-0001 \
   --measurement-type breite \

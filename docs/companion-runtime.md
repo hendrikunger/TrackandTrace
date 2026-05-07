@@ -8,7 +8,7 @@ Set these values in `.env` or the service environment:
 
 ```env
 STATION_ID=1
-SERVER_URL=http://localhost:8000
+SERVER_URL=http://localhost:8081
 COMPANION_STATE_PATH=companion_state.sqlite3
 COMPANION_HEARTBEAT_INTERVAL_SECONDS=10
 COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS=2

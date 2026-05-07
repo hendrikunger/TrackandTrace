@@ -13,6 +13,7 @@ from slf_trace.ui.main import (
     measurement_value_text,
     resolve_kiosk_station_id,
     split_measurement_display_value,
+    ui_websocket_origins,
 )
 
 
@@ -22,6 +23,16 @@ def test_logo_svg_asset_is_available() -> None:
     assert "<svg" in svg
     assert "viewBox" in svg
     assert "circle" in svg
+
+
+def test_ui_websocket_origins_use_explicit_comma_separated_values() -> None:
+    settings = Settings(ui_host="0.0.0.0", ui_port=8080)
+
+    assert ui_websocket_origins(settings) == ["0.0.0.0:8080"]
+
+    settings = Settings(ui_websocket_origins="api.home.io:8080, 10.0.0.151:8080")
+
+    assert ui_websocket_origins(settings) == ["api.home.io:8080", "10.0.0.151:8080"]
 
 
 def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
