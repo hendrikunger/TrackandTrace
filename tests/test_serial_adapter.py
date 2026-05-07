@@ -1,3 +1,4 @@
+import asyncio
 from decimal import Decimal
 
 import pytest
@@ -129,3 +130,42 @@ def test_serial_request_adapter_rejects_non_numeric_response(monkeypatch) -> Non
 
     with pytest.raises(ValueError, match="not numeric"):
         adapter.read_once()
+
+
+@pytest.mark.asyncio
+async def test_serial_request_adapter_waits_until_measurement_needed(monkeypatch) -> None:
+    events = []
+    FakeSerialModule.connection = FakeSerialConnection(response=b"12,34\r\n")
+    adapter = SerialRequestMeasurementAdapter(
+        SerialRequestAdapterConfig(
+            port="COM5",
+            measurement_type="breite",
+            poll_interval_seconds=0.01,
+        )
+    )
+
+    monkeypatch.setattr(
+        "slf_trace.companion.adapters.serial._load_serial_module",
+        lambda: FakeSerialModule,
+    )
+
+    async def emit(event):
+        events.append(event)
+
+    task = asyncio.create_task(
+        adapter.start(
+            AdapterContext(
+                station_id=1,
+                emit=emit,
+                parser_config=ParserConfig(measurement_types={"breite"}),
+                measurement_type_needed=lambda measurement_type: False,
+            )
+        )
+    )
+    await asyncio.sleep(0.03)
+    await adapter.stop()
+    await task
+
+    assert events == []
+    assert FakeSerialModule.connection.writes == []
+    assert adapter.health().state.value == "stopped"
