@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     ui_port: int = 8080
     ui_autoreload: bool = True
     ui_websocket_origins: str | None = None
+    kiosk_scanner_poll_ms: int = 250
+    kiosk_measurement_poll_ms: int = 500
 
     database_host: str = "localhost"
     database_port: int = 5432

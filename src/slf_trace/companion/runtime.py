@@ -157,6 +157,23 @@ class CompanionRuntime:
     def enqueue_barcode_scan_event(self, event: BarcodeScanEvent) -> int:
         return self.enqueue_event("/api/companion/barcode-scans", event.as_payload())
 
+    async def send_barcode_scan_event_now(self, event: BarcodeScanEvent) -> bool:
+        payload = event.as_payload()
+        try:
+            await self.client.post_event("/api/companion/barcode-scans", payload)
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Immediate barcode scan send failed; queued for retry",
+                extra={
+                    "station_id": event.station_id,
+                    "source_type": event.source_type,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.enqueue_event("/api/companion/barcode-scans", payload)
+            return False
+        return True
+
     def enqueue_station_event(
         self,
         *,
@@ -294,7 +311,7 @@ class CompanionRuntime:
         self.enqueue_raw_payload_event(event)
 
     async def handle_barcode_scan_event(self, event: BarcodeScanEvent) -> None:
-        self.enqueue_barcode_scan_event(event)
+        await self.send_barcode_scan_event_now(event)
 
     async def flush_outbox_once(self, limit: int = 50) -> int:
         sent_count = 0

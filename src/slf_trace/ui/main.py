@@ -1715,8 +1715,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_keep_measurement_button.on_click(keep_kiosk_existing_measurement)
     kiosk_new_measurement_button.on_click(request_kiosk_measurement)
     if kiosk:
-        pn.state.add_periodic_callback(poll_kiosk_scanner_scan, period=1000)
-        pn.state.add_periodic_callback(poll_kiosk_measurement, period=1000)
+        pn.state.add_periodic_callback(
+            poll_kiosk_scanner_scan,
+            period=positive_poll_period_ms(settings.kiosk_scanner_poll_ms, default=250),
+        )
+        pn.state.add_periodic_callback(
+            poll_kiosk_measurement,
+            period=positive_poll_period_ms(settings.kiosk_measurement_poll_ms, default=500),
+        )
     else:
         pn.state.add_periodic_callback(auto_refresh_stations, period=5000)
 
@@ -2797,3 +2803,9 @@ def ui_websocket_origins(settings: Settings) -> list[str]:
             if origin.strip()
         ]
     return [f"{settings.ui_host}:{settings.ui_port}"]
+
+
+def positive_poll_period_ms(value: int | None, *, default: int) -> int:
+    if value is None or value <= 0:
+        return default
+    return value

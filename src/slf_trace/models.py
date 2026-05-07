@@ -75,6 +75,15 @@ class Part(TimestampMixin, Base):
 
 class RawPayload(Base):
     __tablename__ = "raw_payloads"
+    __table_args__ = (
+        Index(
+            "ix_raw_payloads_station_source_received",
+            "station_id",
+            "source_type",
+            "received_at",
+            "id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     station_id: Mapped[int] = mapped_column(
@@ -172,6 +181,8 @@ class Measurement(Base):
             "idempotency_key",
             name="uq_measurements_station_idempotency",
         ),
+        Index("ix_measurements_station_part_id", "station_id", "part_id", "id"),
+        Index("ix_measurements_station_measured", "station_id", "measured_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)

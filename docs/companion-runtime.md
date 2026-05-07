@@ -27,6 +27,7 @@ The runtime:
 - fetches station config from `/api/companion/stations/{station_id}/config`
 - builds configured station adapters from the returned `adapters` list
 - sends heartbeats to `/api/companion/heartbeats`
+- sends barcode scans immediately to `/api/companion/barcode-scans`
 - stores retryable outgoing events in a local SQLite outbox
 - retries outbox events until the central API accepts them
 - logs startup, heartbeat, outbox success, and outbox failure events
@@ -84,6 +85,10 @@ The outbox is a SQLite database at `COMPANION_STATE_PATH`. It stores:
 
 Adapter implementations should enqueue retryable events instead of dropping them when the network
 or central API is unavailable.
+
+Barcode scans are optimized for operator feedback: the runtime tries to POST each scan immediately
+instead of waiting for the outbox retry loop. If that immediate send fails, the scan is stored in the
+outbox and retried like other companion messages.
 
 Adapter implementations should still catch expected device failures locally and report degraded
 health. The runtime supervisor is the final safety boundary for unexpected exceptions.

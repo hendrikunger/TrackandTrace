@@ -116,6 +116,22 @@ and Panel UI; the station runs only the companion because scanner and measuremen
 local to the touch PC. Use `INSTALL_LOCAL_UI=true` only for temporary development or fallback
 diagnostics.
 
+Kiosk reaction time is controlled on the central server/UI, not per station. Defaults are tuned for
+touch panels and are safe for about 20 panels on normal PostgreSQL server hardware:
+
+```dotenv
+KIOSK_SCANNER_POLL_MS=250
+KIOSK_MEASUREMENT_POLL_MS=500
+```
+
+`KIOSK_SCANNER_POLL_MS` runs continuously for each open kiosk. `KIOSK_MEASUREMENT_POLL_MS` runs only
+while a barcode is waiting for adapter values. Tune these values in the server/UI environment if
+production load requires it.
+
+Migration `0011_kiosk_latency_indexes` adds indexes for latest scanner payload and latest
+measurement lookups. Run database migrations before enabling the faster polling values in a
+production rollout.
+
 To also configure graphical kiosk boot on a GDM-based Ubuntu desktop, run the installer with:
 
 ```bash
@@ -221,7 +237,12 @@ DATABASE_USER=<database-user>
 DATABASE_PASSWORD=<database-password>
 COMPANION_STATE_PATH=/opt/slf-trace/state/companion_state.sqlite3
 COMPANION_LOG_PATH=/opt/slf-trace/logs/slf-trace-companion.log
+COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS=2
 ```
+
+Barcode scans are sent to the API immediately for fast kiosk feedback. If the API is unavailable,
+the companion falls back to its local SQLite outbox and retries according to
+`COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS`.
 
 Edit `/etc/slf-trace/kiosk.env` for the desktop browser autostart:
 

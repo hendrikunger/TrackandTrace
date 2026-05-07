@@ -11,6 +11,7 @@ from slf_trace.ui.main import (
     kiosk_workflow_title,
     measurement_value_html,
     measurement_value_text,
+    positive_poll_period_ms,
     resolve_kiosk_station_id,
     split_measurement_display_value,
     ui_websocket_origins,
@@ -33,6 +34,16 @@ def test_ui_websocket_origins_use_explicit_comma_separated_values() -> None:
     settings = Settings(ui_websocket_origins="api.home.io:8080, 10.0.0.151:8080")
 
     assert ui_websocket_origins(settings) == ["api.home.io:8080", "10.0.0.151:8080"]
+
+
+def test_kiosk_poll_settings_have_fast_defaults() -> None:
+    settings = Settings()
+
+    assert settings.kiosk_scanner_poll_ms == 250
+    assert settings.kiosk_measurement_poll_ms == 500
+    assert positive_poll_period_ms(0, default=250) == 250
+    assert positive_poll_period_ms(-1, default=500) == 500
+    assert positive_poll_period_ms(125, default=500) == 125
 
 
 def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
