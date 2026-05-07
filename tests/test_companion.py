@@ -263,6 +263,40 @@ def test_runtime_builds_adapters_from_station_config(tmp_path, monkeypatch) -> N
     assert runtime.adapters[1].name == "keyence-srx-scanner"
 
 
+def test_runtime_skips_measurement_adapters_for_non_measurement_workflow(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SMB_USER", "station")
+    monkeypatch.setenv("SMB_PASSWORD", "secret")
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+    runtime.station_config = {
+        "station_id": 1,
+        "name": "Laser 1",
+        "workflow_type": "laser_marking",
+        "scanner_host": "10.0.0.21",
+        "scanner_port": 9004,
+        "scanner_protocol": "Keyence SR-X TCP",
+        "adapters": [
+            {
+                "type": "smb1_polling",
+                "server": "10.0.0.50",
+                "share": "MEASURE",
+                "username_env": "SMB_USER",
+                "password_env": "SMB_PASSWORD",
+                "measurement_type": "ueberstand",
+                "value_column_index": 13,
+                "remote_dir": "/ExcelAusgabe",
+            }
+        ],
+    }
+
+    runtime.configure_adapters_from_station_config()
+
+    assert runtime.adapters == []
+    assert not runtime.is_measurement_capture_workflow()
+    assert runtime.build_heartbeat_payload()["adapter_status"]["workflow_type"] == "laser_marking"
+
+
 def test_runtime_records_adapter_configuration_failure_without_raising(tmp_path) -> None:
     runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
     runtime.station_config = {

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
@@ -288,10 +287,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         placeholder="Optional kiosk title",
         width=260,
     )
-    workflow_config = pn.widgets.TextAreaInput(
-        name="Workflow config JSON",
-        value="{}",
-        height=120,
+    workflow_config_preview = pn.pane.JSON(
+        {},
+        name="Workflow config",
+        depth=4,
+        height=160,
         sizing_mode="stretch_width",
     )
     active = pn.widgets.Checkbox(name="Active", value=True)
@@ -607,6 +607,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     creating_station = False
     selected_adapter_index: int | None = None
     adapter_configs: list[dict[str, Any]] = []
+    workflow_config_value: dict[str, Any] = {}
     selected_history: dict[int, list[dict[str, Any]]] = {}
     loading_station_form = False
     loading_adapter_form = False
@@ -675,7 +676,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             station_message.visible = False
 
     def fill_station_form(station: dict[str, Any]) -> None:
-        nonlocal loading_station_form
+        nonlocal loading_station_form, workflow_config_value
         loading_station_form = True
         try:
             name.value = station["name"] or ""
@@ -685,11 +686,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             set_select_value(scanner_protocol, station["scanner_protocol"] or "")
             set_select_value(workflow_type, station["workflow_type"] or "measurement_capture")
             workflow_title.value = station["workflow_title"] or ""
-            workflow_config.value = json.dumps(
-                station.get("workflow_config") or {},
-                indent=2,
-                sort_keys=True,
-            )
+            workflow_config_value = dict(station.get("workflow_config") or {})
+            workflow_config_preview.object = workflow_config_value
             active.value = station["active"]
             load_adapter_configs(station.get("adapter_config") or [])
         finally:
@@ -720,7 +718,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         adapter_detail_message.visible = not bool(adapter_rows)
 
     def clear_station_form() -> None:
-        nonlocal loading_station_form
+        nonlocal loading_station_form, workflow_config_value
         loading_station_form = True
         try:
             name.value = ""
@@ -730,7 +728,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             scanner_protocol.value = ""
             workflow_type.value = "measurement_capture"
             workflow_title.value = ""
-            workflow_config.value = "{}"
+            workflow_config_value = {}
+            workflow_config_preview.object = workflow_config_value
             active.value = True
             load_adapter_configs([])
         finally:
@@ -800,7 +799,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "scanner_protocol": scanner_protocol.value.strip() or None,
             "workflow_type": workflow_type.value,
             "workflow_title": workflow_title.value.strip() or None,
-            "workflow_config": parse_workflow_config(workflow_config.value),
+            "workflow_config": dict(workflow_config_value),
             "active": active.value,
         }
 
@@ -1725,7 +1724,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         scanner_protocol,
         workflow_type,
         workflow_title,
-        workflow_config,
         active,
     ):
         field_widget.param.watch(autosave_config, "value")
@@ -1815,7 +1813,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                         ncols=2,
                         align="start",
                     ),
-                    workflow_config,
+                    pn.Accordion(
+                        ("Workflow config JSON", workflow_config_preview),
+                        active=[],
+                        sizing_mode="stretch_width",
+                    ),
                     sizing_mode="stretch_width",
                 ),
             ),
@@ -2652,16 +2654,6 @@ def parse_optional_port(value: str) -> int | None:
     if port < 1 or port > 65535:
         raise ValueError("Scanner port must be between 1 and 65535.")
     return port
-
-
-def parse_workflow_config(value: str) -> dict[str, Any]:
-    if not value.strip():
-        return {}
-
-    parsed = json.loads(value)
-    if not isinstance(parsed, dict):
-        raise ValueError("Workflow config must be a JSON object.")
-    return parsed
 
 
 def resolve_kiosk_station_id(

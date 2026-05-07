@@ -87,6 +87,7 @@ class CompanionRuntime:
     def build_heartbeat_payload(self, status: str = "online") -> dict[str, Any]:
         adapter_status: dict[str, Any] = {
             "runtime": status,
+            "workflow_type": self.workflow_type(),
             "os": platform.platform(),
             "python": platform.python_version(),
             "outbox_pending": self.outbox.count(),
@@ -328,7 +329,8 @@ class CompanionRuntime:
     async def run_forever(self) -> None:
         await self.bootstrap_until_ready()
         adapters_ready = self.configure_adapters_safely()
-        await self.sync_measurement_request_cursor()
+        if self.is_measurement_capture_workflow():
+            await self.sync_measurement_request_cursor()
         try:
             await self.send_heartbeat(status="starting" if adapters_ready else "degraded")
         except CLIENT_FAILURES as exc:
@@ -343,9 +345,10 @@ class CompanionRuntime:
         tasks = [
             asyncio.create_task(self.run_heartbeat_loop()),
             asyncio.create_task(self.run_outbox_loop()),
-            asyncio.create_task(self.run_measurement_request_loop()),
             asyncio.create_task(self.run_adapters()),
         ]
+        if self.is_measurement_capture_workflow():
+            tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -617,6 +620,17 @@ class CompanionRuntime:
         return ParserConfig(measurement_types=measurement_types)
 
     def configure_adapters_from_station_config(self) -> None:
+        if not self.is_measurement_capture_workflow():
+            logger.info(
+                "Workflow has no station runtime behavior yet; companion will run without adapters",
+                extra={
+                    "station_id": self.config.station_id,
+                    "workflow_type": self.workflow_type(),
+                },
+            )
+            self.adapters = []
+            return
+
         if not self.adapters:
             adapter_configs = (self.station_config or {}).get("adapters", [])
             self.adapters = build_adapters_from_config(adapter_configs)
@@ -625,6 +639,12 @@ class CompanionRuntime:
             adapter.name != scanner_adapter.name for adapter in self.adapters
         ):
             self.adapters.append(scanner_adapter)
+
+    def workflow_type(self) -> str:
+        return str((self.station_config or {}).get("workflow_type") or "measurement_capture")
+
+    def is_measurement_capture_workflow(self) -> bool:
+        return self.workflow_type() == "measurement_capture"
 
 
 def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeConfig:
