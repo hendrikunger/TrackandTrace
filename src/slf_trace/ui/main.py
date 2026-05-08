@@ -61,6 +61,8 @@ _KIOSK_PRINT_BUTTON_STYLESHEET = """
 :host(.bk-btn-group),
 .bk-btn-group {
     box-sizing: border-box !important;
+    display: block !important;
+    margin: 0 !important;
     max-width: 100% !important;
     overflow: hidden !important;
     width: 100% !important;
@@ -74,6 +76,7 @@ _KIOSK_PRINT_BUTTON_STYLESHEET = """
     font-weight: 800 !important;
     min-height: 96px !important;
     box-sizing: border-box !important;
+    margin: 0 !important;
     max-width: 100% !important;
     width: 100% !important;
 }
@@ -2363,10 +2366,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode,
         pn.Spacer(sizing_mode="stretch_height"),
         kiosk_message,
-        pn.Row(
-            pn.Spacer(width=20),
+        pn.Column(
             kiosk_print_button,
-            pn.Spacer(width=20),
             sizing_mode="stretch_width",
             styles={
                 "box-sizing": "border-box",
