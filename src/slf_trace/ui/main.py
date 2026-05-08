@@ -56,6 +56,26 @@ _KIOSK_CHOICE_BUTTON_STYLESHEET = """
     font-size: 24px !important;
 }
 """
+_KIOSK_PRINT_BUTTON_STYLESHEET = """
+:host {
+    width: 100% !important;
+}
+:host .bk-btn,
+.bk-btn {
+    background: #0f766e !important;
+    border-color: #0f766e !important;
+    color: white !important;
+    font-size: 26px !important;
+    font-weight: 800 !important;
+    min-height: 96px !important;
+    width: 100% !important;
+}
+:host .bk-btn:hover,
+.bk-btn:hover {
+    background: #115e59 !important;
+    border-color: #115e59 !important;
+}
+"""
 _ADMIN_TAB_STYLESHEET = """
 .bk-header {
     gap: 6px;
@@ -679,13 +699,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     )
     kiosk_print_button = pn.widgets.Button(
         name="Etikett drucken",
-        button_type="primary",
-        width=260,
+        button_type="success",
         height=96,
+        sizing_mode="stretch_width",
         visible=False,
         disabled=True,
-        css_classes=["slf-kiosk-choice"],
-        styles={"font-size": "24px", "height": "96px"},
+        styles={"font-size": "26px", "height": "96px", "width": "100%"},
+        stylesheets=[_KIOSK_PRINT_BUTTON_STYLESHEET],
     )
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
     kiosk_measurement_form = pn.Column(sizing_mode="stretch_width")
@@ -1546,6 +1566,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_latest_label_rows = []
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
+        kiosk_print_button.visible = False
+        kiosk_print_button.disabled = True
         with session_scope(settings) as session:
             latest_scan = load_latest_scanner_raw_payload(session, kiosk_current_station_id)
         kiosk_last_scan_raw_payload_id = latest_scan[0] if latest_scan is not None else None
@@ -1558,8 +1580,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode.value = ""
         kiosk_check_measurement_button.disabled = True
         build_kiosk_measurement_form(station)
-        kiosk_print_button.visible = station_has_printer_adapter(station)
-        kiosk_print_button.disabled = True
         if station["workflow_type"] == "measurement_capture":
             kiosk_barcode.visible = True
             update_kiosk_status(step=1)
@@ -1647,6 +1667,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_waiting_for_new_measurement = False
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
+        kiosk_print_button.visible = False
         kiosk_print_button.disabled = True
         for input_widget in kiosk_measurement_inputs.values():
             input_widget.disabled = False
@@ -1771,6 +1792,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 )
         except Exception as exc:  # noqa: BLE001
             kiosk_latest_label_rows = []
+            kiosk_print_button.visible = False
+            kiosk_print_button.disabled = True
             set_message(kiosk_message, f"Messwerte konnten nicht geladen werden: {exc}", "danger")
             return
 
@@ -1781,11 +1804,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             )
             kiosk_message.alert_type = "success"
             kiosk_message.visible = True
+            kiosk_print_button.visible = station_has_printer_adapter(station)
             kiosk_print_button.disabled = not station_has_printer_adapter(station)
             update_kiosk_status(step=3 if station_has_printer_adapter(station) else 2)
             return
 
         kiosk_latest_label_rows = []
+        kiosk_print_button.visible = False
         kiosk_print_button.disabled = True
         kiosk_message.object = (
             "<div style='font-size:28px;line-height:1.25;font-weight:800'>"
