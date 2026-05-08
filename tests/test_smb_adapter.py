@@ -1,5 +1,6 @@
+import asyncio
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 import pytest
@@ -117,6 +118,61 @@ async def test_smb_adapter_polls_latest_csv_and_emits_events(tmp_path) -> None:
     assert measurements[0].values[0].value == Decimal("12.4")
     assert raw_payloads[0].payload_hash
     assert manager.conn.deleted_paths == ["/ExcelAusgabe/result_10.csv"]
+
+
+@pytest.mark.asyncio
+async def test_smb_adapter_reports_processing_error_as_station_event(tmp_path) -> None:
+    station_events = []
+    manager = FakeConnectionManager()
+    manager.conn.files = {"/ExcelAusgabe/result_10.csv": b"header\n1;2\n"}
+    adapter = SmbPollingMeasurementAdapter(
+        replace(_config(tmp_path), poll_interval_seconds=0.01),
+        connection_manager=manager,
+    )
+
+    async def emit(event):
+        raise AssertionError(f"unexpected measurement event: {event}")
+
+    async def emit_station_event(event_type, severity, message, context):
+        station_events.append(
+            {
+                "event_type": event_type,
+                "severity": severity,
+                "message": message,
+                "context": context,
+            }
+        )
+
+    context = AdapterContext(
+        station_id=1,
+        emit=emit,
+        parser_config=ParserConfig(measurement_types={"ueberstand"}),
+        emit_station_event=emit_station_event,
+        measurement_needed=lambda: True,
+    )
+
+    task = asyncio.create_task(adapter.start(context))
+    await asyncio.sleep(0.04)
+    await adapter.stop()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert station_events == [
+        {
+            "event_type": "adapter.smb_read_failed",
+            "severity": "error",
+            "message": "SMB adapter could not process the measurement file.",
+            "context": {
+                "adapter": "smb1-polling",
+                "error": "IndexError",
+                "message": "/ExcelAusgabe/result_10.csv has no column 13.",
+                "server": "10.0.0.50",
+                "share": "MEASURE",
+                "remote_dir": "/ExcelAusgabe",
+                "measurement_type": "ueberstand",
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

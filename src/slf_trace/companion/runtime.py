@@ -212,6 +212,20 @@ class CompanionRuntime:
         else:
             await self.send_progress_heartbeat()
 
+    async def handle_adapter_station_event(
+        self,
+        event_type: str,
+        severity: str,
+        message: str,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        self.enqueue_station_event(
+            event_type=event_type,
+            severity=severity,
+            message=message,
+            context=context,
+        )
+
     async def send_progress_heartbeat(self) -> None:
         try:
             await self.send_heartbeat(status="online")
@@ -427,6 +441,7 @@ class CompanionRuntime:
             parser_config=parser_config,
             emit_raw_payload=self.handle_raw_payload_event,
             emit_barcode_scan=self.handle_barcode_scan_event,
+            emit_station_event=self.handle_adapter_station_event,
             measurement_needed=self.measurement_needed,
             measurement_type_needed=self.measurement_type_needed,
         )
