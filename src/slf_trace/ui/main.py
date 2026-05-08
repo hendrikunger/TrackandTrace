@@ -58,6 +58,9 @@ _KIOSK_CHOICE_BUTTON_STYLESHEET = """
 """
 _KIOSK_PRINT_BUTTON_STYLESHEET = """
 :host {
+    box-sizing: border-box !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
     width: 100% !important;
 }
 :host .bk-btn,
@@ -68,6 +71,8 @@ _KIOSK_PRINT_BUTTON_STYLESHEET = """
     font-size: 26px !important;
     font-weight: 800 !important;
     min-height: 96px !important;
+    box-sizing: border-box !important;
+    max-width: 100% !important;
     width: 100% !important;
 }
 :host .bk-btn:hover,
@@ -704,7 +709,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="stretch_width",
         visible=False,
         disabled=True,
-        styles={"font-size": "26px", "height": "96px", "width": "100%"},
+        styles={
+            "box-sizing": "border-box",
+            "font-size": "26px",
+            "height": "96px",
+            "max-width": "100%",
+            "width": "100%",
+        },
         stylesheets=[_KIOSK_PRINT_BUTTON_STYLESHEET],
     )
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
@@ -2350,7 +2361,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode,
         pn.Spacer(sizing_mode="stretch_height"),
         kiosk_message,
-        kiosk_print_button,
+        pn.Column(
+            kiosk_print_button,
+            sizing_mode="stretch_width",
+            styles={"max-width": "100%", "overflow": "hidden"},
+        ),
         pn.Row(
             kiosk_keep_measurement_button,
             kiosk_new_measurement_button,
