@@ -175,24 +175,72 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             }
             .slf-kiosk-values {
                 display: grid;
-                gap: 8px;
                 margin-top: 10px;
+                border: 1px solid #cbd1d6;
+                background: #f8f9fa;
+            }
+            .slf-kiosk-value-head,
+            .slf-kiosk-value-row {
+                display: grid;
+                grid-template-columns: minmax(150px, 1fr) 320px 92px;
+                align-items: center;
+                column-gap: 12px;
+                padding: 0 18px;
+            }
+            .slf-kiosk-value-head {
+                min-height: 42px;
+                background: #e5e9ed;
+                color: #374151;
+                font-size: 18px;
+                font-weight: 800;
             }
             .slf-kiosk-value-row {
-                align-items: baseline;
-                display: grid;
-                gap: 8px 18px;
-                grid-template-columns: minmax(160px, max-content) minmax(0, 1fr);
+                min-height: 68px;
+                border-top: 1px solid #d7dce1;
             }
             .slf-kiosk-value-label {
-                font-size: 24px;
+                font-size: 26px;
                 font-weight: 700;
                 overflow-wrap: anywhere;
             }
             .slf-kiosk-value-number {
-                font-size: 28px;
+                display: grid;
+                grid-template-columns:
+                    minmax(72px, 1fr)
+                    max-content
+                    minmax(86px, max-content)
+                    max-content;
+                align-items: baseline;
+                font-size: 38px;
                 font-weight: 800;
-                overflow-wrap: anywhere;
+                font-variant-numeric: tabular-nums;
+            }
+            .slf-kiosk-value-integer {
+                text-align: right;
+            }
+            .slf-kiosk-value-unit {
+                color: #4b5563;
+                font-size: 22px;
+                font-weight: 700;
+                padding-left: 12px;
+            }
+            .slf-kiosk-value-state {
+                align-items: center;
+                border: 1px solid #9ca3af;
+                display: inline-flex;
+                font-size: 30px;
+                font-weight: 900;
+                height: 44px;
+                justify-content: center;
+                width: 58px;
+            }
+            .slf-kiosk-value-state.ok {
+                border-color: #15803d;
+                color: #15803d;
+            }
+            .slf-kiosk-value-state.missing {
+                border-color: #b91c1c;
+                color: #b91c1c;
             }
             """
         )
@@ -2651,43 +2699,62 @@ def measurement_value_html(measurement: Measurement, station: dict[str, Any] | N
     return measurement_values_html(measurement_value_lines(measurement, station))
 
 
-def measurement_values_html(value_lines: list[tuple[str, str]]) -> str:
+def measurement_values_html(value_lines: list[tuple[str, str] | tuple[str, str, str]]) -> str:
     rows = []
-    for label, value_text in value_lines:
+    for value_line in value_lines:
+        label, value_text = value_line[:2]
+        status = value_line[2] if len(value_line) > 2 else "ok"
+        is_ok = status == "ok"
         integer_part, decimal_mark, fraction_part, unit = split_measurement_display_value(
             value_text
         )
         rows.append(
             "<div class='slf-kiosk-value-row' "
-            "style='display:grid;grid-template-columns:minmax(180px,max-content) "
-            "minmax(172px,max-content) max-content;"
-            "column-gap:16px;row-gap:8px;align-items:baseline;margin-top:8px;"
-            "font-variant-numeric:tabular-nums'>"
+            "style='display:grid;grid-template-columns:minmax(150px,1fr) 320px 92px;"
+            "column-gap:12px;align-items:center;min-height:68px;padding:0 18px;"
+            "border-top:1px solid #d7dce1;font-variant-numeric:tabular-nums'>"
             f"<span class='slf-kiosk-value-label' "
-            "style='font-size:28px;line-height:1.25;font-weight:800;overflow-wrap:anywhere;"
-            "padding-right:20px'>"
+            "style='font-size:26px;line-height:1.25;font-weight:800;overflow-wrap:anywhere'>"
             f"{escape(label)}</span>"
             "<span class='slf-kiosk-value-number' "
-            "style='display:grid;grid-template-columns:minmax(72px,max-content) max-content "
-            "minmax(86px,max-content);column-gap:0;align-items:baseline'>"
+            "style='display:grid;grid-template-columns:minmax(72px,1fr) max-content "
+            "minmax(86px,max-content) max-content;column-gap:0;align-items:baseline;font-size:38px;"
+            "line-height:1.2;font-weight:800'>"
             "<span class='slf-kiosk-value-integer' "
-            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:right'>"
+            "style='text-align:right'>"
             f"{escape(integer_part)}</span>"
             "<span class='slf-kiosk-value-comma' "
-            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:center'>"
+            "style='text-align:center'>"
             f"{escape(decimal_mark)}</span>"
             "<span class='slf-kiosk-value-fraction' "
-            "style='font-size:34px;line-height:1.2;font-weight:800;text-align:left'>"
+            "style='text-align:left'>"
             f"{escape(fraction_part)}</span>"
-            "</span>"
             "<span class='slf-kiosk-value-unit' "
-            "style='font-size:28px;line-height:1.25;font-weight:700'>"
+            "style='font-size:22px;line-height:1.25;font-weight:700;color:#4b5563;"
+            "padding-left:12px'>"
             f"{escape(unit)}</span>"
+            "</span>"
+            f"<span class='slf-kiosk-value-state {'ok' if is_ok else 'missing'}' "
+            "style='display:inline-flex;align-items:center;justify-content:center;"
+            "width:58px;height:44px;border:1px solid "
+            f"{'#15803d' if is_ok else '#b91c1c'};color:"
+            f"{'#15803d' if is_ok else '#b91c1c'};font-size:30px;font-weight:900'>"
+            f"{'✓' if is_ok else '✕'}</span>"
             "</div>"
         )
-    return "<div class='slf-kiosk-values' style='display:grid;gap:8px;margin-top:10px'>" + "".join(
-        rows
-    ) + "</div>"
+    header = (
+        "<div class='slf-kiosk-value-head' "
+        "style='display:grid;grid-template-columns:minmax(150px,1fr) 320px 92px;"
+        "column-gap:12px;align-items:center;min-height:42px;padding:0 18px;"
+        "background:#e5e9ed;color:#374151;font-size:18px;font-weight:800'>"
+        "<span>Typ</span><span style='text-align:right'>Wert</span>"
+        "<span>Status</span></div>"
+    )
+    return (
+        "<div class='slf-kiosk-values' "
+        "style='display:grid;margin-top:10px;border:1px solid #cbd1d6;background:#f8f9fa'>"
+        f"{header}{''.join(rows)}</div>"
+    )
 
 
 def split_measurement_display_value(value_text: str) -> tuple[str, str, str, str]:
@@ -2853,11 +2920,26 @@ def kiosk_progress_message(
         for detail in station.get("measurement_type_details", [])
     }
     values = progress.get("values", [])
-    rendered_values = []
-    for value in values:
-        measurement_type = str(value.get("measurement_type") or "")
+    rendered_values: list[tuple[str, str, str]] = []
+    received_by_type = {
+        str(value.get("measurement_type") or ""): value
+        for value in values
+        if value.get("measurement_type")
+    }
+    expected_types = [
+        detail["code"]
+        for detail in station.get("measurement_type_details", [])
+        if detail.get("code")
+    ]
+    if not expected_types:
+        expected_types = list(received_by_type)
+    for measurement_type in expected_types:
         label = label_by_code.get(measurement_type, measurement_type)
-        rendered_values.append((label, kiosk_progress_value_text(value)))
+        value = received_by_type.get(measurement_type)
+        if value is None:
+            rendered_values.append((label, "--,----", "missing"))
+        else:
+            rendered_values.append((label, kiosk_progress_value_text(value), "ok"))
     return (
         "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
         "Erledigt:"

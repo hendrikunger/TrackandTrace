@@ -141,10 +141,14 @@ def test_measurement_value_html_renders_each_value_on_own_line() -> None:
     html = measurement_value_html(measurement, station)
 
     assert html.count("slf-kiosk-value-row") == 2
+    assert "Typ</span>" in html
+    assert "Wert</span>" in html
+    assert "Status</span>" in html
+    assert "Einheit" not in html
     assert "slf-kiosk-value-comma" in html
     assert "font-variant-numeric:tabular-nums" in html
-    assert "font-size:28px" in html
-    assert "font-size:34px" in html
+    assert "font-size:26px" in html
+    assert "font-size:38px" in html
     assert ">Breite</span>" in html
     assert ">32</span>" in html
     assert ">2000</span>" in html
@@ -152,6 +156,7 @@ def test_measurement_value_html_renders_each_value_on_own_line() -> None:
     assert ">45</span>" in html
     assert ">0000</span>" in html
     assert ">mm</span>" in html
+    assert ">✓</span>" in html
 
 
 def test_split_measurement_display_value_keeps_decimal_separator_in_own_column() -> None:
@@ -256,4 +261,6 @@ def test_kiosk_progress_helpers_format_received_values() -> None:
     assert ">Breite</span>" in message
     assert ">77</span>" in message
     assert ">7000</span>" in message
+    assert ">Innenring</span>" in message
+    assert ">✕</span>" in message
     assert "Warte auf Innenring." in message
