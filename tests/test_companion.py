@@ -225,6 +225,44 @@ async def test_runtime_detects_station_config_change(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_reuses_scanner_when_only_measurement_adapters_change(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+    runtime.station_config = {
+        "station_id": 1,
+        "name": "Station 1",
+        "workflow_type": "measurement_capture",
+        "scanner_host": "10.0.0.21",
+        "scanner_port": 9004,
+        "scanner_protocol": "Keyence SR-X TCP",
+        "adapters": [{"type": "tcp_line", "name": "tcp-1", "enabled": False}],
+        "measurement_types": [],
+    }
+
+    async def fake_run_adapters(adapters=None):
+        await asyncio.Future()
+
+    monkeypatch.setattr(runtime, "run_adapters", fake_run_adapters)
+
+    await runtime.ensure_scanner_runtime()
+    first_scanner = runtime.active_scanner_adapter
+    first_task = runtime.active_scanner_task
+
+    runtime.station_config = {
+        **runtime.station_config,
+        "adapters": [{"type": "tcp_line", "name": "tcp-1", "enabled": True}],
+    }
+    await runtime.ensure_scanner_runtime()
+
+    assert runtime.active_scanner_adapter is first_scanner
+    assert runtime.active_scanner_task is first_task
+
+    await runtime.stop_scanner_runtime()
+
+
+@pytest.mark.asyncio
 async def test_runtime_retries_outbox_events(tmp_path) -> None:
     client = FakeClient(fail_first_event=True)
     runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)

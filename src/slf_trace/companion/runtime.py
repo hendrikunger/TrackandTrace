@@ -23,6 +23,7 @@ from slf_trace.companion.adapters.factory import (
     build_adapters_from_config,
     build_scanner_adapter_from_station_config,
 )
+from slf_trace.companion.adapters.scanner import TcpBarcodeScannerAdapter
 from slf_trace.companion.client import CompanionClient
 from slf_trace.companion.outbox import Outbox, OutboxEvent
 from slf_trace.config import Settings, get_settings
@@ -73,6 +74,9 @@ class CompanionRuntime:
         )
         self.outbox = outbox or Outbox(config.state_path)
         self.adapters = adapters or []
+        self.active_scanner_adapter: MeasurementAdapter | None = None
+        self.active_scanner_task: asyncio.Task | None = None
+        self.active_scanner_fingerprint: str | None = None
         self.station_config: dict[str, Any] | None = None
         self.station_config_fingerprint: str | None = None
         self.config_reload_event = asyncio.Event()
@@ -398,6 +402,7 @@ class CompanionRuntime:
             await asyncio.gather(*tasks)
         finally:
             await self.stop_adapters()
+            await self.stop_scanner_runtime()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -406,6 +411,11 @@ class CompanionRuntime:
         while True:
             self.adapters = []
             adapters_ready = self.configure_adapters_safely()
+            measurement_adapters = self.measurement_adapters()
+            await self.ensure_scanner_runtime()
+            self.adapters = [*measurement_adapters]
+            if self.active_scanner_adapter is not None:
+                self.adapters.append(self.active_scanner_adapter)
             if self.is_measurement_capture_workflow():
                 await self.sync_measurement_request_cursor()
             try:
@@ -419,7 +429,7 @@ class CompanionRuntime:
                     },
                 )
 
-            runtime_tasks = [asyncio.create_task(self.run_adapters())]
+            runtime_tasks = [asyncio.create_task(self.run_adapters(measurement_adapters))]
             if self.is_measurement_capture_workflow():
                 runtime_tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
             reload_task = asyncio.create_task(self.config_reload_event.wait())
@@ -433,7 +443,7 @@ class CompanionRuntime:
                     self.config_reload_event.clear()
                     if self.pending_measurement_request is not None:
                         self.submit_pending_measurement(reason="config_changed")
-                    await self.stop_adapters()
+                    await self.stop_adapters(measurement_adapters)
                     for task in runtime_tasks:
                         task.cancel()
                     await asyncio.gather(*runtime_tasks, return_exceptions=True)
@@ -447,7 +457,7 @@ class CompanionRuntime:
                 reload_task.cancel()
                 for task in runtime_tasks:
                     task.cancel()
-                await self.stop_adapters()
+                await self.stop_adapters(measurement_adapters)
                 await asyncio.gather(reload_task, *runtime_tasks, return_exceptions=True)
 
     async def run_config_reload_loop(self) -> None:
@@ -500,14 +510,16 @@ class CompanionRuntime:
             return False
         return True
 
-    async def stop_adapters(self) -> None:
+    async def stop_adapters(self, adapters: list[MeasurementAdapter] | None = None) -> None:
+        adapters_to_stop = self.adapters if adapters is None else adapters
         await asyncio.gather(
-            *(adapter.stop() for adapter in self.adapters),
+            *(adapter.stop() for adapter in adapters_to_stop),
             return_exceptions=True,
         )
 
-    async def run_adapters(self) -> None:
-        if not self.adapters:
+    async def run_adapters(self, adapters: list[MeasurementAdapter] | None = None) -> None:
+        adapters_to_run = self.adapters if adapters is None else adapters
+        if not adapters_to_run:
             await asyncio.Future()
 
         parser_config = self._parser_config_from_station_config()
@@ -522,8 +534,62 @@ class CompanionRuntime:
             measurement_type_needed=self.measurement_type_needed,
         )
         await asyncio.gather(
-            *(self.run_adapter_supervisor(adapter, context) for adapter in self.adapters)
+            *(self.run_adapter_supervisor(adapter, context) for adapter in adapters_to_run)
         )
+
+    def measurement_adapters(self) -> list[MeasurementAdapter]:
+        return [adapter for adapter in self.adapters if not self.is_scanner_adapter(adapter)]
+
+    @staticmethod
+    def is_scanner_adapter(adapter: MeasurementAdapter) -> bool:
+        return isinstance(adapter, TcpBarcodeScannerAdapter)
+
+    async def ensure_scanner_runtime(self) -> None:
+        scanner_adapter = self.configured_scanner_adapter()
+        scanner_fingerprint = self.configured_scanner_fingerprint(scanner_adapter)
+        if (
+            scanner_fingerprint == self.active_scanner_fingerprint
+            and self.active_scanner_task is not None
+            and not self.active_scanner_task.done()
+        ):
+            return
+
+        await self.stop_scanner_runtime()
+        if scanner_adapter is None:
+            return
+
+        self.active_scanner_adapter = scanner_adapter
+        self.active_scanner_fingerprint = scanner_fingerprint
+        self.active_scanner_task = asyncio.create_task(self.run_adapters([scanner_adapter]))
+
+    async def stop_scanner_runtime(self) -> None:
+        if self.active_scanner_adapter is not None:
+            await self.active_scanner_adapter.stop()
+        if self.active_scanner_task is not None:
+            self.active_scanner_task.cancel()
+            await asyncio.gather(self.active_scanner_task, return_exceptions=True)
+        self.active_scanner_adapter = None
+        self.active_scanner_task = None
+        self.active_scanner_fingerprint = None
+
+    def configured_scanner_adapter(self) -> MeasurementAdapter | None:
+        if self.workflow_type() not in {"measurement_capture", "label_printing"}:
+            return None
+        return build_scanner_adapter_from_station_config(self.station_config or {})
+
+    def configured_scanner_fingerprint(
+        self,
+        scanner_adapter: MeasurementAdapter | None,
+    ) -> str | None:
+        if scanner_adapter is None:
+            return None
+        scanner_config = {
+            key: value
+            for key, value in (self.station_config or {}).items()
+            if key.startswith("scanner_")
+        }
+        scanner_config["workflow_type"] = self.workflow_type()
+        return self._station_config_fingerprint(scanner_config)
 
     async def run_adapter_supervisor(
         self,
