@@ -12,12 +12,14 @@ from slf_trace.ui.main import (
     kiosk_progress_message,
     kiosk_progress_value_text,
     kiosk_workflow_title,
+    label_printing_measurements_html,
     measurement_value_html,
     measurement_value_text,
     positive_poll_period_ms,
     resolve_kiosk_station_id,
     set_select_value,
     split_measurement_display_value,
+    station_has_printer_adapter,
     ui_websocket_origins,
 )
 
@@ -94,6 +96,15 @@ def test_adapter_measurement_type_codes_use_enabled_adapters_only() -> None:
     ) == ["breite"]
 
 
+def test_station_has_printer_adapter_uses_enabled_printer_types() -> None:
+    assert station_has_printer_adapter(
+        {"adapter_config": [{"type": "printer_stub", "enabled": True}]}
+    )
+    assert not station_has_printer_adapter(
+        {"adapter_config": [{"type": "printer_stub", "enabled": False}]}
+    )
+
+
 def test_measurement_value_text_labels_values_by_measurement_type() -> None:
     measurement = SimpleNamespace(
         values=[
@@ -147,6 +158,37 @@ def test_split_measurement_display_value_keeps_decimal_separator_in_own_column()
     assert split_measurement_display_value("32,2000 mm") == ("32", ",", "2000", "mm")
     assert split_measurement_display_value("45 mm") == ("45", ",", "0000", "mm")
     assert split_measurement_display_value("44") == ("44", ",", "0000", "")
+
+
+def test_label_printing_measurements_html_renders_latest_values() -> None:
+    html = label_printing_measurements_html(
+        "3412",
+        [
+            {
+                "label": "Breite",
+                "value": Decimal("32.2"),
+                "unit": "mm",
+                "station": "BREITE-01",
+                "measured_at": "2026-05-08T10:00:00+00:00",
+            },
+            {
+                "label": "Fertig",
+                "value": Decimal("44"),
+                "unit": "mm",
+                "station": "FERTIG-01",
+                "measured_at": "2026-05-08T10:01:00+00:00",
+            },
+        ],
+    )
+
+    assert "Letzte Messwerte: 3412" in html
+    assert ">Breite</span>" in html
+    assert ">32</span>" in html
+    assert ">2000</span>" in html
+    assert ">Fertig</span>" in html
+    assert ">44</span>" in html
+    assert "BREITE-01" in html
+    assert "FERTIG-01" in html
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:

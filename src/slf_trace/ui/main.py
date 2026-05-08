@@ -91,6 +91,7 @@ WORKFLOW_OPTIONS = {
     "Label printing": "label_printing",
     "Laser marking": "laser_marking",
 }
+PRINTER_ADAPTER_TYPES = {"printer_stub", "label_printer", "label_printer_stub"}
 SCANNER_PROTOCOL_OPTIONS = {
     "": "",
     "Keyence SR-X TCP": "Keyence SR-X TCP",
@@ -379,6 +380,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "SMB1 polling": "smb1_polling",
             "Serial request": "serial_request",
             "TCP/IP line": "tcp_line",
+            "Printer stub": "printer_stub",
         },
         value="smb1_polling",
         width=adapter_field_width,
@@ -577,11 +579,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_refresh_button = pn.widgets.Button(name="Aktualisieren", button_type="light", width=130)
     kiosk_title = pn.pane.HTML(
         "<div style='font-size:24px;font-weight:800;color:#1f3b57'>Station auswählen</div>",
-        sizing_mode="fixed",
+        sizing_mode="stretch_width",
     )
     kiosk_station_badge = pn.pane.HTML(
         "",
-        sizing_mode="fixed",
+        sizing_mode="stretch_width",
     )
     kiosk_status = pn.pane.HTML("")
     kiosk_message = pn.pane.Alert(
@@ -627,6 +629,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         styles={"font-size": "24px", "height": "152px"},
         stylesheets=[_KIOSK_CHOICE_BUTTON_STYLESHEET],
     )
+    kiosk_print_button = pn.widgets.Button(
+        name="Etikett drucken",
+        button_type="primary",
+        width=260,
+        height=96,
+        visible=False,
+        disabled=True,
+        css_classes=["slf-kiosk-choice"],
+        styles={"font-size": "24px", "height": "96px"},
+    )
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
     kiosk_measurement_form = pn.Column(sizing_mode="stretch_width")
     kiosk_summary = pn.pane.Markdown("")
@@ -636,6 +648,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_pending_existing_measurement: dict[str, str] | None = None
     kiosk_waiting_for_new_measurement = False
     kiosk_measurement_baseline_id = 0
+    kiosk_latest_label_rows: list[dict[str, Any]] = []
 
     station_rows: list[dict[str, Any]] = []
     measurement_type_rows: list[dict[str, Any]] = []
@@ -1125,6 +1138,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         update_adapter_action_state()
 
     def current_adapter_values() -> dict[str, Any]:
+        if adapter_type.value in PRINTER_ADAPTER_TYPES:
+            return {
+                "type": adapter_type.value,
+                "enabled": adapter_enabled.value,
+                "name": adapter_name.value.strip() or "printer-stub",
+            }
+
         if adapter_type.value == "tcp_line":
             values = {
                 "type": adapter_type.value,
@@ -1467,7 +1487,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     def load_kiosk_station(_: object | None = None) -> None:
         nonlocal kiosk_current_station_id, kiosk_current_barcode, kiosk_last_scan_raw_payload_id
         nonlocal kiosk_pending_existing_measurement, kiosk_waiting_for_new_measurement
-        nonlocal kiosk_measurement_baseline_id
+        nonlocal kiosk_measurement_baseline_id, kiosk_latest_label_rows
         if kiosk_station.value is None:
             return
         kiosk_current_station_id = int(kiosk_station.value)
@@ -1475,6 +1495,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_pending_existing_measurement = None
         kiosk_waiting_for_new_measurement = False
         kiosk_measurement_baseline_id = 0
+        kiosk_latest_label_rows = []
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
         with session_scope(settings) as session:
@@ -1489,12 +1510,22 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode.value = ""
         kiosk_check_measurement_button.disabled = True
         build_kiosk_measurement_form(station)
+        kiosk_print_button.visible = station_has_printer_adapter(station)
+        kiosk_print_button.disabled = True
         if station["workflow_type"] == "measurement_capture":
             kiosk_barcode.visible = True
             update_kiosk_status(step=1)
             set_message(
                 kiosk_message,
                 "Bitte Barcode scannen oder Rückmeldenummer eingeben.",
+                "info",
+            )
+        elif station["workflow_type"] == "label_printing":
+            kiosk_barcode.visible = True
+            update_kiosk_status(step=1)
+            set_message(
+                kiosk_message,
+                "Bitte Rückmeldenummer scannen, um die letzten Messwerte anzuzeigen.",
                 "info",
             )
         else:
@@ -1568,11 +1599,23 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_waiting_for_new_measurement = False
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
+        kiosk_print_button.disabled = True
         for input_widget in kiosk_measurement_inputs.values():
             input_widget.disabled = False
         kiosk_check_measurement_button.disabled = False
 
         station = station_row_by_id(kiosk_current_station_id)
+        if station["workflow_type"] == "label_printing":
+            show_label_printing_measurements(barcode, station)
+            return
+        if station["workflow_type"] != "measurement_capture":
+            set_message(
+                kiosk_message,
+                f"Workflow `{station['workflow_type']}` kann diesen Scan noch nicht verarbeiten.",
+                "warning",
+            )
+            return
+
         measurement_type_codes = set(station.get("measurement_type_codes") or [])
         try:
             with session_scope(settings) as session:
@@ -1666,6 +1709,62 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_new_measurement_button.visible = False
         kiosk_check_measurement_button.disabled = True
         update_kiosk_status(step=1)
+
+    def show_label_printing_measurements(
+        rueckmeldenummer_value: str,
+        station: dict[str, Any],
+    ) -> None:
+        nonlocal kiosk_latest_label_rows
+        try:
+            with session_scope(settings) as session:
+                kiosk_latest_label_rows = load_latest_measurement_values_for_part(
+                    session,
+                    rueckmeldenummer_value,
+                )
+        except Exception as exc:  # noqa: BLE001
+            kiosk_latest_label_rows = []
+            set_message(kiosk_message, f"Messwerte konnten nicht geladen werden: {exc}", "danger")
+            return
+
+        if kiosk_latest_label_rows:
+            kiosk_message.object = label_printing_measurements_html(
+                rueckmeldenummer_value,
+                kiosk_latest_label_rows,
+            )
+            kiosk_message.alert_type = "success"
+            kiosk_message.visible = True
+            kiosk_print_button.disabled = not station_has_printer_adapter(station)
+            update_kiosk_status(step=3 if station_has_printer_adapter(station) else 2)
+            return
+
+        kiosk_latest_label_rows = []
+        kiosk_print_button.disabled = True
+        kiosk_message.object = (
+            "<div style='font-size:28px;line-height:1.25;font-weight:800'>"
+            f"Keine Messwerte für {escape(rueckmeldenummer_value)} gefunden."
+            "</div>"
+        )
+        kiosk_message.alert_type = "warning"
+        kiosk_message.visible = True
+        update_kiosk_status(step=2)
+
+    def print_kiosk_label(_: object | None = None) -> None:
+        if kiosk_current_barcode is None:
+            set_message(kiosk_message, "Bitte zuerst Rückmeldenummer scannen.", "warning")
+            return
+        if not kiosk_latest_label_rows:
+            set_message(kiosk_message, "Keine Messwerte zum Drucken geladen.", "warning")
+            return
+
+        update_kiosk_status(step=3)
+        kiosk_message.object = label_printing_measurements_html(
+            kiosk_current_barcode,
+            kiosk_latest_label_rows,
+            title="Druck vorbereitet",
+            footer="Printer adapter ist aktuell ein Stub. Kein echtes Etikett wurde gesendet.",
+        )
+        kiosk_message.alert_type = "success"
+        kiosk_message.visible = True
 
     def check_kiosk_measurement(_: object | None = None) -> None:
         nonlocal kiosk_current_barcode, kiosk_waiting_for_new_measurement
@@ -1790,7 +1889,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         if not kiosk or kiosk_current_station_id is None:
             return
         station = station_row_by_id(kiosk_current_station_id)
-        if station.get("workflow_type") != "measurement_capture":
+        if station.get("workflow_type") not in {"measurement_capture", "label_printing"}:
             return
 
         try:
@@ -1827,11 +1926,21 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         )
 
     def update_kiosk_status(*, step: int) -> None:
-        labels = [
-            ("1", "Barcode"),
-            ("2", "Messwert"),
-            ("3", "Hochladen"),
-        ]
+        workflow = "measurement_capture"
+        if kiosk_current_station_id is not None:
+            workflow = station_row_by_id(kiosk_current_station_id).get("workflow_type") or workflow
+        if workflow == "label_printing":
+            labels = [
+                ("1", "Barcode"),
+                ("2", "Messwerte"),
+                ("3", "Drucken"),
+            ]
+        else:
+            labels = [
+                ("1", "Barcode"),
+                ("2", "Messwert"),
+                ("3", "Hochladen"),
+            ]
         rendered_steps = []
         for number, label in labels:
             active = int(number) == step
@@ -1869,6 +1978,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_check_measurement_button.on_click(check_kiosk_measurement)
     kiosk_keep_measurement_button.on_click(keep_kiosk_existing_measurement)
     kiosk_new_measurement_button.on_click(request_kiosk_measurement)
+    kiosk_print_button.on_click(print_kiosk_label)
     if kiosk:
         pn.state.add_periodic_callback(
             poll_kiosk_scanner_scan,
@@ -2068,11 +2178,13 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         smb_adapter_section.visible = adapter_type.value == "smb1_polling"
         tcp_adapter_section.visible = adapter_type.value == "tcp_line"
         serial_adapter_section.visible = adapter_type.value == "serial_request"
+        adapter_measurement_type.visible = adapter_type.value not in PRINTER_ADAPTER_TYPES
         if not loading_adapter_form:
             default_names = {
                 "smb1_polling": "smb1-polling",
                 "tcp_line": "tcp-line",
                 "serial_request": "serial-request",
+                "printer_stub": "printer-stub",
             }
             known_default_names = set(default_names.values())
             if adapter_name.value.strip() in known_default_names or not adapter_name.value.strip():
@@ -2165,6 +2277,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_barcode,
         pn.Spacer(sizing_mode="stretch_height"),
         kiosk_message,
+        kiosk_print_button,
         pn.Row(
             kiosk_keep_measurement_button,
             kiosk_new_measurement_button,
@@ -2412,6 +2525,14 @@ def adapter_measurement_type_codes(configs: list[dict[str, Any]]) -> list[str]:
     )
 
 
+def station_has_printer_adapter(station: dict[str, Any]) -> bool:
+    return any(
+        config.get("enabled", True) is not False
+        and str(config.get("type") or "").strip().lower() in PRINTER_ADAPTER_TYPES
+        for config in station.get("adapter_config") or []
+    )
+
+
 def kiosk_workflow_title(station: dict[str, Any]) -> str:
     if station.get("workflow_title"):
         return str(station["workflow_title"])
@@ -2600,6 +2721,79 @@ def measurement_value_lines(
         )
         for value in sorted(measurement.values, key=lambda item: item.measurement_type)
     ]
+
+
+def load_latest_measurement_values_for_part(
+    session: Session,
+    rueckmeldenummer: str,
+) -> list[dict[str, Any]]:
+    rows = session.execute(
+        select(MeasurementValue, Measurement, Station, MeasurementType)
+        .join(MeasurementValue.measurement)
+        .join(Measurement.part)
+        .join(Measurement.station)
+        .outerjoin(MeasurementValue.type_definition)
+        .where(Part.rueckmeldenummer == rueckmeldenummer)
+        .order_by(
+            MeasurementValue.measurement_type.asc(),
+            Measurement.measured_at.desc(),
+            Measurement.id.desc(),
+            MeasurementValue.id.desc(),
+        )
+    ).all()
+
+    latest_by_type: dict[str, dict[str, Any]] = {}
+    for value, measurement, station, measurement_type in rows:
+        if value.measurement_type in latest_by_type:
+            continue
+        latest_by_type[value.measurement_type] = {
+            "measurement_type": value.measurement_type,
+            "label": measurement_type.label if measurement_type else value.measurement_type,
+            "value": value.value,
+            "unit": value.unit or (measurement_type.unit if measurement_type else ""),
+            "station": station.name,
+            "measured_at": format_datetime(measurement.measured_at),
+        }
+    return sorted(latest_by_type.values(), key=lambda item: str(item["label"]).lower())
+
+
+def label_printing_measurements_html(
+    rueckmeldenummer: str,
+    rows: list[dict[str, Any]],
+    *,
+    title: str = "Letzte Messwerte",
+    footer: str | None = None,
+) -> str:
+    value_lines = [
+        (
+            str(row["label"]),
+            f"{str(row['value']).replace('.', ',')} {row.get('unit') or ''}".strip(),
+        )
+        for row in rows
+    ]
+    meta_rows = "".join(
+        "<div style='display:grid;grid-template-columns:minmax(180px,max-content) "
+        "minmax(0,1fr);column-gap:18px;margin-top:4px;color:#4b5563;font-size:18px'>"
+        f"<span>{escape(str(row['label']))}</span>"
+        f"<span>{escape(str(row.get('station') or '-'))} · "
+        f"{escape(str(row.get('measured_at') or '-'))}</span>"
+        "</div>"
+        for row in rows
+    )
+    footer_html = (
+        "<div style='font-size:20px;line-height:1.3;margin-top:14px;color:#4b5563'>"
+        f"{escape(footer)}</div>"
+        if footer
+        else ""
+    )
+    return (
+        "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
+        f"{escape(title)}: {escape(rueckmeldenummer)}"
+        "</div>"
+        f"{measurement_values_html(value_lines)}"
+        f"<div style='margin-top:12px'>{meta_rows}</div>"
+        f"{footer_html}"
+    )
 
 
 def load_kiosk_measurement_progress(

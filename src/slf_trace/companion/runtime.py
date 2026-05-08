@@ -639,13 +639,19 @@ class CompanionRuntime:
     def configure_adapters_from_station_config(self) -> None:
         if not self.is_measurement_capture_workflow():
             logger.info(
-                "Workflow has no station runtime behavior yet; companion will run without adapters",
+                "Workflow has no measurement runtime behavior; companion will run scanner only",
                 extra={
                     "station_id": self.config.station_id,
                     "workflow_type": self.workflow_type(),
                 },
             )
             self.adapters = []
+            if self.workflow_type() == "label_printing":
+                scanner_adapter = build_scanner_adapter_from_station_config(
+                    self.station_config or {}
+                )
+                if scanner_adapter is not None:
+                    self.adapters.append(scanner_adapter)
             return
 
         if not self.adapters:

@@ -29,6 +29,8 @@ def build_adapters_from_config(configs: list[dict[str, Any]]) -> list[Measuremen
             )
         elif adapter_type in {"tcp", "tcp_line", "tcp_ip"}:
             adapters.append(TcpLineMeasurementAdapter(tcp_line_config_from_dict(adapter_config)))
+        elif adapter_type in {"printer_stub", "label_printer", "label_printer_stub"}:
+            continue
         else:
             raise ValueError(f"Unsupported station adapter type: {adapter_type!r}.")
     return adapters

@@ -303,6 +303,25 @@ def test_runtime_skips_measurement_adapters_for_non_measurement_workflow(
     assert runtime.build_heartbeat_payload()["adapter_status"]["workflow_type"] == "laser_marking"
 
 
+def test_runtime_starts_scanner_only_for_label_printing_workflow(tmp_path) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+    runtime.station_config = {
+        "station_id": 1,
+        "name": "Label 1",
+        "workflow_type": "label_printing",
+        "scanner_host": "10.0.0.21",
+        "scanner_port": 9004,
+        "scanner_protocol": "Keyence SR-X TCP",
+        "adapters": [{"type": "printer_stub", "name": "printer-stub"}],
+    }
+
+    runtime.configure_adapters_from_station_config()
+
+    assert len(runtime.adapters) == 1
+    assert runtime.adapters[0].name == "keyence-srx-scanner"
+    assert runtime.build_heartbeat_payload()["adapter_status"]["workflow_type"] == "label_printing"
+
+
 def test_workflow_type_normalizes_display_labels() -> None:
     assert normalize_workflow_type("Measurement capture") == "measurement_capture"
     assert normalize_workflow_type("Laser marking") == "laser_marking"
