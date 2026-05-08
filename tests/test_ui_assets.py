@@ -197,6 +197,34 @@ def test_label_printing_measurements_html_renders_latest_values() -> None:
     assert "2026-05-08T10:00:00+00:00" not in html
 
 
+def test_label_printing_measurements_html_marks_configured_missing_values() -> None:
+    html = label_printing_measurements_html(
+        "3412",
+        [
+            {
+                "measurement_type": "innenring",
+                "label": "Innenring",
+                "value": Decimal("45"),
+                "unit": "mm",
+            }
+        ],
+        station={
+            "measurement_types": [
+                {"code": "breite", "label": "Breite", "unit": "mm", "active": True},
+                {"code": "innenring", "label": "Innenring", "unit": "mm", "active": True},
+            ]
+        },
+    )
+
+    assert ">Breite</span>" in html
+    assert ">--</span>" in html
+    assert ">----</span>" in html
+    assert ">✕</span>" in html
+    assert ">Innenring</span>" in html
+    assert ">45</span>" in html
+    assert ">✓</span>" in html
+
+
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
     assert (
         kiosk_workflow_title(

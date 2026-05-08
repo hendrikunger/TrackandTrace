@@ -31,6 +31,7 @@ from slf_trace.models import (
     Station,
     StationEvent,
     StationHeartbeat,
+    StationMeasurementType,
 )
 from slf_trace.security import generate_station_token, hash_station_token
 from slf_trace.ui.branding import load_logo_svg
@@ -1816,6 +1817,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             kiosk_message.object = label_printing_measurements_html(
                 rueckmeldenummer_value,
                 kiosk_latest_label_rows,
+                station=station,
             )
             kiosk_message.alert_type = "success"
             kiosk_message.visible = True
@@ -1845,9 +1847,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             return
 
         update_kiosk_status(step=3)
+        station = station_row_by_id(kiosk_current_station_id)
         kiosk_message.object = label_printing_measurements_html(
             kiosk_current_barcode,
             kiosk_latest_label_rows,
+            station=station,
             title="Druck vorbereitet",
             footer="Printer adapter ist aktuell ein Stub. Kein echtes Etikett wurde gesendet.",
         )
@@ -2481,6 +2485,11 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
     )
     station_rows = session.execute(
         select(Station, StationHeartbeat, StationEvent)
+        .options(
+            selectinload(Station.measurement_type_links).selectinload(
+                StationMeasurementType.measurement_type
+            )
+        )
         .outerjoin(
             latest_heartbeat_at,
             latest_heartbeat_at.c.station_id == Station.id,
@@ -2580,6 +2589,20 @@ def load_station_rows(session: Session) -> list[dict[str, Any]]:
                         {"code": code, "label": code, "unit": None},
                     )
                     for code in measurement_type_codes
+                ],
+                "measurement_types": [
+                    {
+                        "code": link.measurement_type_code,
+                        "label": link.measurement_type.label
+                        if link.measurement_type
+                        else link.measurement_type_code,
+                        "unit": link.measurement_type.unit if link.measurement_type else None,
+                        "active": link.active,
+                    }
+                    for link in sorted(
+                        station.measurement_type_links,
+                        key=lambda item: item.measurement_type_code,
+                    )
                 ],
             }
         )
@@ -2880,16 +2903,11 @@ def label_printing_measurements_html(
     rueckmeldenummer: str,
     rows: list[dict[str, Any]],
     *,
+    station: dict[str, Any] | None = None,
     title: str = "Letzte Messwerte",
     footer: str | None = None,
 ) -> str:
-    value_lines = [
-        (
-            str(row["label"]),
-            f"{str(row['value']).replace('.', ',')} {row.get('unit') or ''}".strip(),
-        )
-        for row in rows
-    ]
+    value_lines = label_printing_value_lines(rows, station)
     footer_html = (
         "<div style='font-size:20px;line-height:1.3;margin-top:14px;color:#4b5563'>"
         f"{escape(footer)}</div>"
@@ -2903,6 +2921,45 @@ def label_printing_measurements_html(
         f"{measurement_values_html(value_lines)}"
         f"{footer_html}"
     )
+
+
+def label_printing_value_lines(
+    rows: list[dict[str, Any]],
+    station: dict[str, Any] | None = None,
+) -> list[tuple[str, str] | tuple[str, str, str]]:
+    latest_by_code = {
+        str(row["measurement_type"]): row for row in rows if row.get("measurement_type")
+    }
+    expected_types = [
+        measurement_type
+        for measurement_type in (station or {}).get("measurement_types", [])
+        if measurement_type.get("active") and measurement_type.get("code")
+    ]
+    if not expected_types:
+        return [
+            (
+                str(row["label"]),
+                f"{str(row['value']).replace('.', ',')} {row.get('unit') or ''}".strip(),
+            )
+            for row in rows
+        ]
+
+    value_lines: list[tuple[str, str] | tuple[str, str, str]] = []
+    for measurement_type in expected_types:
+        code = str(measurement_type["code"])
+        label = str(measurement_type.get("label") or code)
+        unit = str(measurement_type.get("unit") or "")
+        row = latest_by_code.get(code)
+        if row is None:
+            value_lines.append((label, f"--,---- {unit}".strip(), "missing"))
+            continue
+        value_lines.append(
+            (
+                label,
+                f"{str(row['value']).replace('.', ',')} {row.get('unit') or unit}".strip(),
+            )
+        )
+    return value_lines
 
 
 def load_kiosk_measurement_progress(
