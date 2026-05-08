@@ -61,7 +61,6 @@ _KIOSK_PRINT_BUTTON_STYLESHEET = """
 :host(.bk-btn-group),
 .bk-btn-group {
     box-sizing: border-box !important;
-    display: block !important;
     margin: 0 !important;
     max-width: 100% !important;
     overflow: hidden !important;
