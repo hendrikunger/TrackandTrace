@@ -50,6 +50,8 @@ fingerprint of the fetched station config, polls the API, and when the fingerpri
 the current adapter tasks and starts a fresh adapter runtime from the new config. If a measurement
 collection is active during the reload, the partial request is closed with a `config_changed`
 diagnostic so the station does not mix values from two different configurations.
+The barcode scanner runtime is kept alive across measurement-adapter-only changes; it is restarted
+only when the scanner settings or scanner-capable workflow change.
 
 Adapter configuration is also guarded. If station config or environment variables are invalid, the
 runtime queues `adapter.configuration_failed`, sends degraded heartbeats, and keeps the outbox/API

@@ -374,7 +374,9 @@ The companion also polls station configuration from the API according to
 `COMPANION_CONFIG_POLL_INTERVAL_SECONDS`. Adapter enable/disable changes, adapter settings,
 measurement types, and workflow changes are picked up by the running companion without a manual
 service restart. Restart the station service only when the companion code, Python environment, or
-local service environment changes.
+local service environment changes. Measurement-adapter-only changes reload those adapters without
+cycling the barcode scanner; scanner settings and scanner-capable workflow changes do restart the
+scanner runtime.
 
 Edit `/etc/slf-trace/kiosk.env` for the desktop browser autostart:
 
