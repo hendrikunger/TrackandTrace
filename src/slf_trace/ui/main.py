@@ -57,7 +57,9 @@ _KIOSK_CHOICE_BUTTON_STYLESHEET = """
 }
 """
 _KIOSK_PRINT_BUTTON_STYLESHEET = """
-:host {
+:host,
+:host(.bk-btn-group),
+.bk-btn-group {
     box-sizing: border-box !important;
     max-width: 100% !important;
     overflow: hidden !important;
@@ -2364,7 +2366,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         pn.Column(
             kiosk_print_button,
             sizing_mode="stretch_width",
-            styles={"max-width": "100%", "overflow": "hidden"},
+            styles={
+                "box-sizing": "border-box",
+                "max-width": "100%",
+                "overflow": "hidden",
+                "padding-right": "12px",
+            },
         ),
         pn.Row(
             kiosk_keep_measurement_button,
