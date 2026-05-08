@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -723,6 +724,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         },
         stylesheets=[_KIOSK_PRINT_BUTTON_STYLESHEET],
     )
+    kiosk_reload_trigger = pn.widgets.TextInput(value="", visible=False)
+    kiosk_reload_trigger.jscallback(value="window.location.reload()")
     kiosk_measurement_inputs: dict[str, pn.widgets.TextInput] = {}
     kiosk_measurement_form = pn.Column(sizing_mode="stretch_width")
     kiosk_summary = pn.pane.Markdown("")
@@ -733,6 +736,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_waiting_for_new_measurement = False
     kiosk_measurement_baseline_id = 0
     kiosk_latest_label_rows: list[dict[str, Any]] = []
+    kiosk_station_config_fingerprint: str | None = None
+    kiosk_browser_reload_pending = False
 
     station_rows: list[dict[str, Any]] = []
     measurement_type_rows: list[dict[str, Any]] = []
@@ -1572,6 +1577,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         nonlocal kiosk_current_station_id, kiosk_current_barcode, kiosk_last_scan_raw_payload_id
         nonlocal kiosk_pending_existing_measurement, kiosk_waiting_for_new_measurement
         nonlocal kiosk_measurement_baseline_id, kiosk_latest_label_rows
+        nonlocal kiosk_station_config_fingerprint, kiosk_browser_reload_pending
         if kiosk_station.value is None:
             return
         kiosk_current_station_id = int(kiosk_station.value)
@@ -1588,6 +1594,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             latest_scan = load_latest_scanner_raw_payload(session, kiosk_current_station_id)
         kiosk_last_scan_raw_payload_id = latest_scan[0] if latest_scan is not None else None
         station = station_row_by_id(kiosk_current_station_id)
+        kiosk_station_config_fingerprint = kiosk_station_config_hash(station)
+        kiosk_browser_reload_pending = False
         kiosk_title.object = (
             "<div style='font-size:24px;font-weight:800;color:#1f3b57'>"
             f"{escape(kiosk_workflow_title(station))}</div>"
@@ -1794,6 +1802,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_new_measurement_button.visible = False
         kiosk_check_measurement_button.disabled = True
         update_kiosk_status(step=1)
+        maybe_reload_kiosk_browser()
 
     def show_label_printing_measurements(
         rueckmeldenummer_value: str,
@@ -1934,6 +1943,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             input_widget.value = ""
             input_widget.disabled = True
         update_kiosk_status(step=1)
+        maybe_reload_kiosk_browser()
 
     def show_kiosk_measurement_found(value_html: str) -> None:
         kiosk_message.object = (
@@ -2009,6 +2019,57 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             return
         check_kiosk_measurement()
 
+    def kiosk_is_idle_for_browser_reload() -> bool:
+        return (
+            kiosk_current_barcode is None
+            and not kiosk_waiting_for_new_measurement
+            and kiosk_pending_existing_measurement is None
+            and not kiosk_keep_measurement_button.visible
+            and not kiosk_new_measurement_button.visible
+            and not kiosk_print_button.visible
+        )
+
+    def maybe_reload_kiosk_browser() -> None:
+        nonlocal kiosk_browser_reload_pending
+        if not kiosk_browser_reload_pending or not kiosk_is_idle_for_browser_reload():
+            return
+        kiosk_browser_reload_pending = False
+        kiosk_reload_trigger.value = uuid4().hex
+
+    def poll_kiosk_station_config() -> None:
+        nonlocal station_rows, kiosk_station_config_fingerprint, kiosk_browser_reload_pending
+        if not kiosk or kiosk_current_station_id is None:
+            return
+
+        try:
+            with session_scope(settings) as session:
+                fresh_station_rows = load_station_rows(session)
+        except Exception:
+            return
+
+        station = next(
+            (row for row in fresh_station_rows if row["id"] == kiosk_current_station_id),
+            None,
+        )
+        if station is None:
+            kiosk_browser_reload_pending = True
+            maybe_reload_kiosk_browser()
+            return
+
+        fresh_fingerprint = kiosk_station_config_hash(station)
+        if kiosk_station_config_fingerprint is None:
+            kiosk_station_config_fingerprint = fresh_fingerprint
+            station_rows = fresh_station_rows
+            return
+        if fresh_fingerprint == kiosk_station_config_fingerprint:
+            station_rows = fresh_station_rows
+            return
+
+        station_rows = fresh_station_rows
+        kiosk_station_config_fingerprint = fresh_fingerprint
+        kiosk_browser_reload_pending = True
+        maybe_reload_kiosk_browser()
+
     def auto_refresh_stations() -> None:
         if kiosk or creating_station:
             return
@@ -2080,6 +2141,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             poll_kiosk_measurement,
             period=positive_poll_period_ms(settings.kiosk_measurement_poll_ms, default=500),
         )
+        pn.state.add_periodic_callback(poll_kiosk_station_config, period=5000)
     else:
         pn.state.add_periodic_callback(auto_refresh_stations, period=5000)
 
@@ -2398,6 +2460,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     if kiosk:
         return pn.Column(
             kiosk_panel,
+            kiosk_reload_trigger,
             sizing_mode="stretch_width",
             styles={"background": "#ffffff", "padding": "16px"},
         )
@@ -2652,6 +2715,25 @@ def station_has_printer_adapter(station: dict[str, Any]) -> bool:
         and str(config.get("type") or "").strip().lower() in PRINTER_ADAPTER_TYPES
         for config in station.get("adapter_config") or []
     )
+
+
+def kiosk_station_config_hash(station: dict[str, Any]) -> str:
+    payload = {
+        "id": station.get("id"),
+        "name": station.get("name"),
+        "scanner_host": station.get("scanner_host"),
+        "scanner_port": station.get("scanner_port"),
+        "scanner_protocol": station.get("scanner_protocol"),
+        "workflow_type": station.get("workflow_type"),
+        "workflow_title": station.get("workflow_title"),
+        "workflow_config": station.get("workflow_config") or {},
+        "adapter_config": station.get("adapter_config") or [],
+        "active": station.get("active"),
+        "measurement_type_details": station.get("measurement_type_details") or [],
+        "measurement_type_codes": station.get("measurement_type_codes") or [],
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def kiosk_workflow_title(station: dict[str, Any]) -> str:

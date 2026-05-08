@@ -11,6 +11,7 @@ from slf_trace.ui.main import (
     kiosk_missing_progress_labels,
     kiosk_progress_message,
     kiosk_progress_value_text,
+    kiosk_station_config_hash,
     kiosk_workflow_title,
     label_printing_measurements_html,
     measurement_value_html,
@@ -103,6 +104,32 @@ def test_station_has_printer_adapter_uses_enabled_printer_types() -> None:
     assert not station_has_printer_adapter(
         {"adapter_config": [{"type": "printer_stub", "enabled": False}]}
     )
+
+
+def test_kiosk_station_config_hash_ignores_runtime_health() -> None:
+    station = {
+        "id": 3,
+        "name": "BREITE-DEV-01",
+        "workflow_type": "measurement_capture",
+        "adapter_config": [{"type": "tcp_line", "enabled": True}],
+        "measurement_type_codes": ["breite"],
+        "measurement_type_details": [{"code": "breite", "label": "Breite", "unit": "mm"}],
+        "health_state": "online",
+        "last_heartbeat_at": "2026-05-08T10:00:00Z",
+    }
+
+    changed_health = {
+        **station,
+        "health_state": "degraded",
+        "last_heartbeat_at": "2026-05-08T10:00:10Z",
+    }
+    changed_config = {
+        **station,
+        "adapter_config": [{"type": "tcp_line", "enabled": False}],
+    }
+
+    assert kiosk_station_config_hash(station) == kiosk_station_config_hash(changed_health)
+    assert kiosk_station_config_hash(station) != kiosk_station_config_hash(changed_config)
 
 
 def test_measurement_value_text_labels_values_by_measurement_type() -> None:
