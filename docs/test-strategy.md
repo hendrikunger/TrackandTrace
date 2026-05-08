@@ -20,10 +20,11 @@ python -m compileall src tests
 - Barcode scan and measurement API behavior, including duplicate idempotency responses.
 - Parser behavior for key-value payloads, decimal commas, CSV payloads, unknown types, and invalid
   values.
-- Adapter behavior for simulator, TCP line, Keyence SR-X barcode frames, serial factories, and
-  SMB1 polling.
+- Adapter behavior for simulator, TCP line, Keyence SR-X barcode frames, serial request factories,
+  and SMB1 polling.
 - Companion outbox persistence, retry, API-outage bootstrap safety, adapter configuration failure
-  safety, measurement-request polling outage safety, and adapter supervisor restart behavior.
+  safety, measurement-request polling outage safety, multi-adapter aggregation, and adapter
+  supervisor restart behavior.
 - Live event delivery around stale websocket clients.
 
 ## Simulators

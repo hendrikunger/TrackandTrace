@@ -1,4 +1,4 @@
-# Architecture and Implementation Plan
+# Architecture
 
 ## Runtime Architecture
 
@@ -30,12 +30,22 @@ One row per physical measuring workplace.
 - `scanner_host`
 - `scanner_port`
 - `scanner_protocol`
+- `workflow_type`
+- `workflow_title`
+- `workflow_config`
+- `adapter_config`
+- `companion_token_hash`
 - `payload_format`
 - `timing_notes`
 - `network_notes`
 - `active`
 - `created_at`
 - `updated_at`
+
+`workflow_type` is the runtime/UI switch for station processes. Measurement stations use
+`measurement_capture`; label-printing and laser-marking stations can exist without fake measurement
+types. `adapter_config` stores hardware adapter definitions for the station companion. The raw
+station token is shown once in the admin UI and only its hash is stored in `companion_token_hash`.
 
 ### `parts`
 
@@ -59,6 +69,8 @@ One row per captured measurement event.
 - `raw_payload_id`
 - `idempotency_key`
 - `created_at`
+
+`station_id` plus `idempotency_key` is unique so companion retries do not duplicate measurements.
 
 ### `measurement_values`
 
@@ -100,6 +112,34 @@ Original scanner/device/file payloads for traceability and parser debugging.
 - `content`
 - `received_at`
 
+Scanner barcode scans are also retained here when a raw payload is supplied. Kiosk measurement
+requests are represented as `source_type="measurement_request"` raw payload rows so the companion
+can poll and collect adapter values for the scanned Rückmeldenummer.
+
+### `station_heartbeats`
+
+One row per companion heartbeat.
+
+- `id`
+- `station_id`
+- `status`
+- `hostname`
+- `companion_version`
+- `adapter_status`
+- `received_at`
+
+### `station_events`
+
+Central diagnostics emitted by stations or parser/API failures.
+
+- `id`
+- `station_id`
+- `event_type`
+- `severity`
+- `message`
+- `context`
+- `occurred_at`
+
 ## Companion App
 
 The companion app is installed on every station.
@@ -109,26 +149,29 @@ Responsibilities:
 - Listen for Keyence SR-X scanner connections on the station scanner port.
 - Connect to measuring machine interfaces.
 - Handle SMB1 on Ubuntu 24.04 LTS using `pysmb`.
-- Poll files or listen to TCP/serial streams.
+- Poll SMB files or listen to TCP/serial streams.
 - Parse or forward raw payloads.
 - Maintain local SQLite outbox.
 - Retry submissions after network outages.
 - Send heartbeat and adapter status.
 - Report version and health state.
+- Poll barcode-created measurement requests and aggregate adapter values for the active
+  Rückmeldenummer.
+- Send station diagnostics events for configuration, adapter, parser, and partial-measurement
+  failures.
 
 ## Adapter Types
 
-Initial adapter targets:
+Built-in adapter targets:
 
 - Keyence SR-X TCP barcode scanner listener
 - SMB1 polling adapter with `pysmb`
 - Generic TCP/IP measurement adapter
-- Generic serial measurement adapter
-- File/directory polling adapter
+- Serial request/response measurement adapter
 - Simulator/manual test adapter
 
-The current companion scaffold includes the shared adapter lifecycle plus simulator, TCP line,
-serial line, and SMB1 polling adapter foundations. See `docs/measurement-adapters.md`.
+The companion builds SMB, TCP, and serial adapters from station `adapter_config`. It also builds the
+Keyence scanner listener from station scanner fields. See `docs/measurement-adapters.md`.
 
 ## Kiosk Startup
 
@@ -149,10 +192,13 @@ serial line, and SMB1 polling adapter foundations. See `docs/measurement-adapter
 
 ## Milestones
 
-1. Foundations: station inventory, database schema, FastAPI skeleton, API contracts, persistence, idempotency, WebSockets.
-2. Companion and integrations: companion runtime, Keyence SR-X TCP scanner listener, SMB1 via `pysmb`, TCP/IP and serial interfaces, parser layer.
-3. Operator UI and kiosk: Panel station UI, supervisor/admin UI, Windows 11 kiosk, Ubuntu 24.04 kiosk.
-4. Pilot hardening: auth, diagnostics, deployment packaging, automated tests, simulators, pilot validation.
+1. Foundations: station inventory, database schema, FastAPI API contracts, persistence,
+   idempotency, WebSockets.
+2. Companion and integrations: companion runtime, Keyence SR-X TCP scanner listener, SMB1 via
+   `pysmb`, TCP/IP and serial request interfaces, parser layer.
+3. Operator UI and kiosk: Panel kiosk UI, supervisor/admin UI, Windows 11 kiosk, Ubuntu 24.04 kiosk.
+4. Pilot hardening: companion token auth, diagnostics, deployment packaging, automated tests,
+   simulators, pilot validation.
 
 ## Pilot Success Criteria
 

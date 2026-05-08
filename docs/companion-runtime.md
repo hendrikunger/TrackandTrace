@@ -18,13 +18,15 @@ COMPANION_MEASUREMENT_AGGREGATION_TIMEOUT_SECONDS=300
 ## Run
 
 ```bash
-mamba activate slf_trace
+/Users/unhe/miniforge3/bin/mamba activate slf
 slf-trace-companion
 ```
 
 The runtime:
 
 - fetches station config from `/api/companion/stations/{station_id}/config`
+- polls `/api/companion/stations/{station_id}/measurement-request?after_id=<id>` for
+  barcode-created collection requests on measurement-capture stations
 - builds configured station adapters from the returned `adapters` list
 - sends heartbeats to `/api/companion/heartbeats`
 - sends barcode scans immediately to `/api/companion/barcode-scans`
@@ -54,11 +56,13 @@ once; the runtime stays alive and does not re-emit their measurement forever.
 Barcode scans create measurement requests in the central API. The companion polls those requests and
 opens one active collection window per Rückmeldenummer.
 
-Adapters without their own `rueckmeldenummer` only read while a collection window is active. When a
-station has several assigned measurement types, the runtime waits until all expected types have been
-emitted by the station adapters, then submits one combined measurement. For example, a station
-assigned `breite` and `ueberstand` can receive one value from a TCP adapter and one value from an SMB
-adapter and store them under the same Rückmeldenummer.
+Adapters without their own `rueckmeldenummer` only read while a collection window is active. The
+expected measurement types come first from enabled adapter `measurement_type` fields. If no enabled
+adapter declares a type, the runtime falls back to the station's configured `measurement_types`
+allowlist. When a station has several expected measurement types, the runtime waits until all
+expected types have been emitted by the station adapters, then submits one combined measurement. For
+example, a station assigned `breite` and `ueberstand` can receive one value from a TCP adapter and
+one value from an SMB adapter and store them under the same Rückmeldenummer.
 
 If the window reaches `COMPANION_MEASUREMENT_AGGREGATION_TIMEOUT_SECONDS` after at least one value
 has arrived, the companion submits the values it has and queues a `measurement.partial` diagnostic

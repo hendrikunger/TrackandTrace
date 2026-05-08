@@ -28,6 +28,7 @@ fail the companion API request that produced the event.
 ## Published Events
 
 - `station.heartbeat`
+- `station.event`
 - `barcode.scan`
 - `raw_payload.received`
 - `measurement.captured`

@@ -9,11 +9,13 @@ The kiosk resolves the station in this order:
 
 1. URL parameter: `/kiosk?station_id=1`
 2. Environment: `STATION_ID=1`
-3. Development fallback: first active station with at least one measurement type
+3. Development fallback: first active kiosk-eligible station
 
 For production, set `STATION_ID` and use a URL with `station_id`. If the configured station is not
-active or has no measurement type assigned, the kiosk shows an error instead of silently selecting a
-different station.
+active, the kiosk shows an error instead of silently selecting a different station. Measurement
+capture stations must also have at least one effective measurement type, usually through enabled
+adapter `measurement_type` settings. Non-measurement workflows such as `label_printing` and
+`laser_marking` can open without measurement types.
 
 ## Windows 11
 
@@ -25,8 +27,43 @@ $Url = "http://<server-host>:8080/kiosk?station_id=1"
 Start-Process "msedge.exe" -ArgumentList "--kiosk $Url --edge-kiosk-type=fullscreen --no-first-run"
 ```
 
-For unattended startup, place that command in a logon scheduled task for the dedicated panel user.
-Use Windows Assigned Access when the panel should be locked to Edge.
+For unattended startup, register a logon scheduled task for the dedicated panel user. The browser
+must run as the interactive panel user, not as `SYSTEM`.
+
+```powershell
+$TaskName = "SLF Track Trace Kiosk Browser"
+$KioskUser = "<domain-or-machine>\<panel-user>"
+$Url = "http://<server-host>:8080/kiosk?station_id=1"
+$Edge = "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"
+if (-not (Test-Path $Edge)) {
+  $Edge = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+}
+
+$Action = New-ScheduledTaskAction `
+  -Execute $Edge `
+  -Argument "--kiosk $Url --edge-kiosk-type=fullscreen --no-first-run"
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $KioskUser
+$Principal = New-ScheduledTaskPrincipal -UserId $KioskUser -LogonType Interactive
+
+Register-ScheduledTask `
+  -TaskName $TaskName `
+  -Action $Action `
+  -Trigger $Trigger `
+  -Principal $Principal `
+  -Force
+```
+
+Manage the task:
+
+```powershell
+Get-ScheduledTask "SLF Track Trace Kiosk Browser"
+Start-ScheduledTask "SLF Track Trace Kiosk Browser"
+Stop-ScheduledTask "SLF Track Trace Kiosk Browser"
+```
+
+Use Windows Assigned Access when the panel should be locked to Edge. Assigned Access is separate
+from the companion startup task; the companion is registered by `deploy\install-panel.ps1` as
+`SLF Track Trace Companion` and runs at system startup as `SYSTEM`.
 
 ## Ubuntu 24.04
 

@@ -83,6 +83,58 @@ Responsibilities:
 PostgreSQL is expected to be installed and managed separately as a Windows service. The `.env`
 database settings must point at that PostgreSQL instance.
 
+### Windows Server Startup Tasks
+
+`deploy\install-server.ps1` registers Windows Scheduled Tasks instead of relying on a third-party
+service wrapper. The production server should have these tasks:
+
+| Task name | Trigger | Principal | Purpose |
+| --- | --- | --- | --- |
+| `SLF Track Trace API` | At system startup | `SYSTEM`, highest privileges | FastAPI server on `APP_PORT`, default `8081` |
+| `SLF Track Trace UI` | At system startup | `SYSTEM`, highest privileges | Central Panel admin/kiosk UI on `UI_PORT`, default `8080` |
+
+The task actions are created by the installer and point at the current release junction:
+
+```powershell
+C:\SLF\TrackTrace\current\env\python.exe `
+  -c "from slf_trace.api.main import run; run()"
+```
+
+```powershell
+C:\SLF\TrackTrace\current\env\python.exe `
+  -c "from slf_trace.ui.main import run; run()"
+```
+
+Useful operator commands:
+
+```powershell
+Get-ScheduledTask "SLF Track Trace API", "SLF Track Trace UI"
+Get-ScheduledTaskInfo "SLF Track Trace API"
+Get-ScheduledTaskInfo "SLF Track Trace UI"
+```
+
+```powershell
+Start-ScheduledTask "SLF Track Trace API"
+Start-ScheduledTask "SLF Track Trace UI"
+```
+
+```powershell
+Stop-ScheduledTask "SLF Track Trace API"
+Stop-ScheduledTask "SLF Track Trace UI"
+```
+
+After changing `C:\SLF\TrackTrace\current\.env`, restart both tasks:
+
+```powershell
+Stop-ScheduledTask "SLF Track Trace UI"
+Stop-ScheduledTask "SLF Track Trace API"
+Start-ScheduledTask "SLF Track Trace API"
+Start-ScheduledTask "SLF Track Trace UI"
+```
+
+The server UI task is the normal production path. Do not use `-SkipUi` unless this host is
+intentionally API-only for diagnostics.
+
 ## Windows 11 Station Install
 
 Use `deploy/install-panel.ps1` on Windows touch panel machines.
@@ -98,6 +150,79 @@ Responsibilities:
 The Windows panel can use built-in Scheduled Tasks, avoiding third-party service wrappers in the
 offline environment. The normal production station does not run the Panel UI locally. Use
 `-InstallLocalUi` only for temporary diagnostics or fallback operation.
+
+### Windows 11 Station Startup Tasks
+
+`deploy\install-panel.ps1` registers the station companion as a Windows Scheduled Task:
+
+| Task name | Trigger | Principal | Purpose |
+| --- | --- | --- | --- |
+| `SLF Track Trace Companion` | At system startup | `SYSTEM`, highest privileges | Local scanner/measurement adapter runtime |
+
+The normal task action is:
+
+```powershell
+C:\SLF\TrackTrace\current\env\Scripts\slf-trace-companion.exe
+```
+
+with working directory:
+
+```powershell
+C:\SLF\TrackTrace\current
+```
+
+The companion task reads `C:\SLF\TrackTrace\current\.env`. Minimum station values:
+
+```env
+SERVER_URL=http://<server-host>:8081
+STATION_ID=<station-id>
+STATION_TOKEN=<token-created-in-admin-ui>
+```
+
+Manage and inspect the companion task:
+
+```powershell
+Get-ScheduledTask "SLF Track Trace Companion"
+Get-ScheduledTaskInfo "SLF Track Trace Companion"
+Start-ScheduledTask "SLF Track Trace Companion"
+Stop-ScheduledTask "SLF Track Trace Companion"
+```
+
+Production Windows 11 stations should not run a local Panel UI task. If a diagnostic local UI was
+installed earlier, remove it:
+
+```powershell
+Unregister-ScheduledTask -TaskName "SLF Track Trace UI" -Confirm:$false
+```
+
+The kiosk browser is a separate user-logon task because it must run in an interactive desktop
+session. Create it for the dedicated panel user, not as `SYSTEM`:
+
+```powershell
+$TaskName = "SLF Track Trace Kiosk Browser"
+$KioskUser = "<domain-or-machine>\<panel-user>"
+$Url = "http://<server-host>:8080/kiosk?station_id=<station-id>"
+$Edge = "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"
+if (-not (Test-Path $Edge)) {
+  $Edge = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+}
+
+$Action = New-ScheduledTaskAction `
+  -Execute $Edge `
+  -Argument "--kiosk $Url --edge-kiosk-type=fullscreen --no-first-run"
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $KioskUser
+$Principal = New-ScheduledTaskPrincipal -UserId $KioskUser -LogonType Interactive
+
+Register-ScheduledTask `
+  -TaskName $TaskName `
+  -Action $Action `
+  -Trigger $Trigger `
+  -Principal $Principal `
+  -Force
+```
+
+For locked-down panels, combine the browser task with Windows Assigned Access for the same panel
+user. The browser task only opens Edge; Assigned Access controls whether the user can leave Edge.
 
 ## Ubuntu 24.04 Station Install
 

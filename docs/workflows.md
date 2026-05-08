@@ -11,7 +11,8 @@ device integration.
   information in the admin UI; process-specific settings should get dedicated UI fields before
   operators or admins need to change them.
 - `adapter_config`: hardware and companion adapter behavior only.
-- `measurement_type_codes`: measurement allowlist for `measurement_capture` stations.
+- `measurement_type_codes`: fallback/manual measurement allowlist for `measurement_capture`
+  stations when enabled adapters do not declare their own `measurement_type`.
 
 Initial workflow identifiers:
 
@@ -27,8 +28,10 @@ operator-friendly names without relying on station name heuristics.
 
 Measurement capture stations continue to use:
 
-- `measurement_type_codes` for allowed measurement values.
-- `adapter_config` for SMB, serial, TCP, or scanner integration.
+- `adapter_config` for SMB, serial, TCP, or scanner integration. Enabled adapter
+  `measurement_type` fields normally define the effective measurement assignment.
+- `measurement_type_codes` only as the fallback/manual allowlist when no enabled adapter declares a
+  measurement type.
 
 The companion only starts the measurement-request loop and measurement/scanner adapters when
 `workflow_type="measurement_capture"`. This keeps the current measuring behavior unchanged while
@@ -63,7 +66,7 @@ Existing stations are migrated with `workflow_type="measurement_capture"` and em
 configuration. After migration:
 
 1. Assign `workflow_title` for existing stations such as `Breite messen` and `Fertig messen`.
-2. Keep measurement assignments for measuring stations.
+2. Keep measurement assignments on enabled adapter `measurement_type` fields where possible.
 3. Add dedicated UI fields for process-specific settings instead of requiring manual JSON edits.
 4. Keep hardware connection settings in `adapter_config`.
 5. For label or laser stations, set `workflow_type` accordingly and leave measurement types empty.

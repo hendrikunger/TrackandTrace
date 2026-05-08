@@ -17,10 +17,17 @@ Stations are configured centrally and fetched by the companion app during bootst
 - `timing_notes`
 - `network_notes`
 - `active`
-- `measurement_type_codes`, the measurement types this station is allowed to submit
+- `measurement_type_codes`, the API allowlist for measurement types when no enabled adapter
+  declares a `measurement_type`
 
 The companion reports its current `hostname` with every heartbeat. Hostname is runtime diagnostics,
 not central station configuration.
+
+For measurement capture stations, the effective measurement type list is usually derived from the
+enabled entries in `adapter_config`. If one or more enabled adapters declare `measurement_type`, the
+companion config endpoint and server validation use those adapter codes. The
+`station_measurement_types` allowlist remains the fallback/manual API path for stations without
+adapter-declared measurement types.
 
 ## API
 
@@ -73,7 +80,18 @@ Update a station:
 PATCH /api/stations/{station_id}
 ```
 
-Assigning `measurement_type_codes` replaces the station's active measurement type allowlist.
+Assigning `measurement_type_codes` replaces the station's active fallback measurement type
+allowlist. The admin UI generally keeps measurement capture assignments in the enabled adapter
+definitions instead.
+
+Generate or rotate a station token:
+
+```http
+POST /api/stations/{station_id}/token
+```
+
+The response contains the raw `STATION_TOKEN` once. Store it in the station service environment; the
+database stores only a token hash.
 
 For non-measurement workflows such as `label_printing` or `laser_marking`, leave
 `measurement_type_codes` empty and store UI/process behavior in `workflow_config`. Do not add fake

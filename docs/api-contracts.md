@@ -18,6 +18,32 @@ Scanner fields are also returned here: `scanner_host` is the expected scanner IP
 `scanner_port` is the local listener port, and `scanner_protocol` is the scanner label.
 Station inventory is managed through `/api/stations`; see `docs/station-inventory.md`.
 
+When `COMPANION_AUTH_REQUIRED=true`, every companion endpoint requires:
+
+```http
+X-Station-ID: <station_id>
+X-Station-Token: <station-token>
+```
+
+The header station id must match the station id in the URL or request body.
+
+## Measurement Request Polling
+
+`GET /stations/{station_id}/measurement-request?after_id=0`
+
+Returns the next barcode-created measurement request after the supplied raw-payload/request id. An
+empty response means there is currently no newer request.
+
+```json
+{
+  "request_id": 42,
+  "rueckmeldenummer": "DEV-RM-0001"
+}
+```
+
+The companion uses this endpoint to open one active collection window. Adapters without their own
+`rueckmeldenummer` only read while a request is active.
+
 ## Heartbeat
 
 `POST /heartbeats`
@@ -26,9 +52,17 @@ Station inventory is managed through `/api/stations`; see `docs/station-inventor
 {
   "station_id": 1,
   "status": "online",
+  "hostname": "station-panel-01",
   "companion_version": "dev",
   "adapter_status": {
-    "simulator": "online"
+    "runtime": "online",
+    "workflow_type": "measurement_capture",
+    "outbox_pending": 0,
+    "adapters": {
+      "tcp-test": {
+        "state": "online"
+      }
+    }
   }
 }
 ```
@@ -124,7 +158,9 @@ A station that produces multiple values can submit multiple entries in `values`.
 Measurement types are controlled in the database:
 
 - `measurement_types` defines known active types, labels, and default units.
-- `station_measurement_types` defines which active types a station may submit.
+- Enabled adapter `measurement_type` fields define the effective station allowlist when present.
+- `station_measurement_types` defines the fallback/manual allowlist for stations without
+  adapter-declared measurement types.
 
 The initial catalog contains:
 
@@ -147,6 +183,9 @@ measurements.
 - `PATCH /api/stations/{station_id}/config` updates centrally managed station configuration.
 - `PUT /api/stations/{station_id}/measurement-types` replaces the active measurement type
   assignment for one station.
+- `POST /api/stations/{station_id}/token` generates a new station companion token. The raw token is
+  returned once and only the hash is retained centrally.
+- `GET /api/stations/{station_id}/events` returns recent station diagnostics events.
 - `GET /api/measurement-types` returns the controlled measurement type catalog.
 - `GET /api/parts/{rueckmeldenummer}/measurements` returns measurement history for one part.
   Pass `station_id` as an optional query parameter to narrow the history to one station.

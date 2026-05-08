@@ -28,7 +28,12 @@ the companion alive without repeatedly emitting the same test measurement.
 - `station_id`: the current station.
 - `parser_config`: the allowed measurement type catalog assigned to the station.
 - `emit(event)`: async callback used to hand normalized measurements to the runtime.
+- `emit_raw_payload(event)`: async callback used for raw payload forwarding.
 - `emit_barcode_scan(event)`: async callback used by barcode scanner adapters.
+- `measurement_needed()`: tells polling/request adapters whether a barcode-created collection
+  window is active.
+- `measurement_type_needed(measurement_type)`: tells adapters whether their value is still missing
+  for the current request.
 
 The runtime queues emitted events into the local SQLite outbox and sends them to
 `POST /api/companion/measurements`. When a barcode/measurement request is active, the runtime can
@@ -61,9 +66,10 @@ MeasurementEvent(
 )
 ```
 
-The measurement type must exist in the station's allowed measurement type list. This lets a station
-send only `breite`, only `ueberstand`, or any future configured measurement type without changing
-the API contract.
+The measurement type must be in the station's effective measurement type list. Enabled adapter
+`measurement_type` values define that list when present; otherwise the companion falls back to the
+station measurement type allowlist. This lets a station send only `breite`, only `ueberstand`, or
+any future configured measurement type without changing the API contract.
 
 ## Built-In Adapters
 
@@ -110,7 +116,9 @@ The TCP line payload is parsed by the same parser layer as simulator payloads. F
 
 ### Serial Line Adapter
 
-`SerialLineMeasurementAdapter` reads line-delimited values from a serial port. It requires the
+`SerialLineMeasurementAdapter` reads line-delimited values from a serial port and is available as a
+lower-level adapter class for tests/custom wiring. The station `adapter_config` factory currently
+creates `SerialRequestMeasurementAdapter` for configured serial devices. Serial support requires the
 optional `pyserial` package in the station companion environment:
 
 ```bash

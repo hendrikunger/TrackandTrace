@@ -332,7 +332,9 @@ The no-hardware test strategy and simulator commands live in `docs/test-strategy
 
 ## Smoke Test Calls
 
-Create a station with a single allowed measurement type:
+Create a station with a single SMB adapter measurement type. The enabled adapter `measurement_type`
+defines the effective companion/server allowlist; `measurement_type_codes` is included as the
+fallback/manual allowlist for API paths that do not derive assignments from adapters.
 
 ```bash
 curl -X POST http://localhost:8081/api/stations \
@@ -374,8 +376,16 @@ curl -X POST http://localhost:8081/api/companion/heartbeats \
   -d '{
     "station_id": 1,
     "status": "online",
+    "hostname": "dev-host",
     "companion_version": "dev",
-    "adapter_status": {"simulator": "online"}
+    "adapter_status": {
+      "runtime": "online",
+      "workflow_type": "measurement_capture",
+      "outbox_pending": 0,
+      "adapters": {
+        "simulator": {"state": "online"}
+      }
+    }
   }'
 ```
 
