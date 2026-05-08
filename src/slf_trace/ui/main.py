@@ -2364,8 +2364,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         pn.Spacer(sizing_mode="stretch_height"),
         kiosk_message,
         pn.Row(
+            pn.Spacer(width=20),
             kiosk_print_button,
-            pn.Spacer(width=12),
+            pn.Spacer(width=20),
             sizing_mode="stretch_width",
             styles={
                 "box-sizing": "border-box",
