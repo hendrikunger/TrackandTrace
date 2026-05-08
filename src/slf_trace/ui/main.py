@@ -182,16 +182,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             .slf-kiosk-value-head,
             .slf-kiosk-value-row {
                 display: grid;
-                grid-template-columns: minmax(150px, 1fr) 320px 92px;
+                grid-template-columns: minmax(120px, 1fr) minmax(220px, 300px) 72px;
                 align-items: center;
-                column-gap: 12px;
+                column-gap: 8px;
                 padding: 0 18px;
             }
             .slf-kiosk-value-head {
                 min-height: 42px;
                 background: #e5e9ed;
                 color: #374151;
-                font-size: 18px;
+                font-size: 17px;
                 font-weight: 800;
             }
             .slf-kiosk-value-row {
@@ -2710,8 +2710,9 @@ def measurement_values_html(value_lines: list[tuple[str, str] | tuple[str, str, 
         )
         rows.append(
             "<div class='slf-kiosk-value-row' "
-            "style='display:grid;grid-template-columns:minmax(150px,1fr) 320px 92px;"
-            "column-gap:12px;align-items:center;min-height:68px;padding:0 18px;"
+            "style='display:grid;grid-template-columns:minmax(120px,1fr) "
+            "minmax(220px,300px) 72px;"
+            "column-gap:8px;align-items:center;min-height:68px;padding:0 18px;"
             "border-top:1px solid #d7dce1;font-variant-numeric:tabular-nums'>"
             f"<span class='slf-kiosk-value-label' "
             "style='font-size:26px;line-height:1.25;font-weight:800;overflow-wrap:anywhere'>"
@@ -2736,7 +2737,7 @@ def measurement_values_html(value_lines: list[tuple[str, str] | tuple[str, str, 
             "</span>"
             f"<span class='slf-kiosk-value-state {'ok' if is_ok else 'missing'}' "
             "style='display:inline-flex;align-items:center;justify-content:center;"
-            "width:58px;height:44px;border:1px solid "
+            "width:52px;height:44px;border:1px solid "
             f"{'#15803d' if is_ok else '#b91c1c'};color:"
             f"{'#15803d' if is_ok else '#b91c1c'};font-size:30px;font-weight:900'>"
             f"{'✓' if is_ok else '✕'}</span>"
@@ -2744,9 +2745,10 @@ def measurement_values_html(value_lines: list[tuple[str, str] | tuple[str, str, 
         )
     header = (
         "<div class='slf-kiosk-value-head' "
-        "style='display:grid;grid-template-columns:minmax(150px,1fr) 320px 92px;"
-        "column-gap:12px;align-items:center;min-height:42px;padding:0 18px;"
-        "background:#e5e9ed;color:#374151;font-size:18px;font-weight:800'>"
+        "style='display:grid;grid-template-columns:minmax(120px,1fr) "
+        "minmax(220px,300px) 72px;"
+        "column-gap:8px;align-items:center;min-height:42px;padding:0 18px;"
+        "background:#e5e9ed;color:#374151;font-size:17px;font-weight:800'>"
         "<span>Typ</span><span style='text-align:right'>Wert</span>"
         "<span>Status</span></div>"
     )
@@ -2838,15 +2840,6 @@ def label_printing_measurements_html(
         )
         for row in rows
     ]
-    meta_rows = "".join(
-        "<div style='display:grid;grid-template-columns:minmax(180px,max-content) "
-        "minmax(0,1fr);column-gap:18px;margin-top:4px;color:#4b5563;font-size:18px'>"
-        f"<span>{escape(str(row['label']))}</span>"
-        f"<span>{escape(str(row.get('station') or '-'))} · "
-        f"{escape(str(row.get('measured_at') or '-'))}</span>"
-        "</div>"
-        for row in rows
-    )
     footer_html = (
         "<div style='font-size:20px;line-height:1.3;margin-top:14px;color:#4b5563'>"
         f"{escape(footer)}</div>"
@@ -2858,7 +2851,6 @@ def label_printing_measurements_html(
         f"{escape(title)}: {escape(rueckmeldenummer)}"
         "</div>"
         f"{measurement_values_html(value_lines)}"
-        f"<div style='margin-top:12px'>{meta_rows}</div>"
         f"{footer_html}"
     )
 

@@ -192,8 +192,9 @@ def test_label_printing_measurements_html_renders_latest_values() -> None:
     assert ">2000</span>" in html
     assert ">Fertig</span>" in html
     assert ">44</span>" in html
-    assert "BREITE-01" in html
-    assert "FERTIG-01" in html
+    assert "BREITE-01" not in html
+    assert "FERTIG-01" not in html
+    assert "2026-05-08T10:00:00+00:00" not in html
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
