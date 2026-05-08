@@ -363,11 +363,18 @@ DATABASE_PASSWORD=<database-password>
 COMPANION_STATE_PATH=/opt/slf-trace/state/companion_state.sqlite3
 COMPANION_LOG_PATH=/opt/slf-trace/logs/slf-trace-companion.log
 COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS=2
+COMPANION_CONFIG_POLL_INTERVAL_SECONDS=10
 ```
 
 Barcode scans are sent to the API immediately for fast kiosk feedback. If the API is unavailable,
 the companion falls back to its local SQLite outbox and retries according to
 `COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS`.
+
+The companion also polls station configuration from the API according to
+`COMPANION_CONFIG_POLL_INTERVAL_SECONDS`. Adapter enable/disable changes, adapter settings,
+measurement types, and workflow changes are picked up by the running companion without a manual
+service restart. Restart the station service only when the companion code, Python environment, or
+local service environment changes.
 
 Edit `/etc/slf-trace/kiosk.env` for the desktop browser autostart:
 

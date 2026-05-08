@@ -12,6 +12,7 @@ SERVER_URL=http://localhost:8081
 COMPANION_STATE_PATH=companion_state.sqlite3
 COMPANION_HEARTBEAT_INTERVAL_SECONDS=10
 COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS=2
+COMPANION_CONFIG_POLL_INTERVAL_SECONDS=10
 COMPANION_MEASUREMENT_AGGREGATION_TIMEOUT_SECONDS=300
 ```
 
@@ -25,6 +26,8 @@ slf-trace-companion
 The runtime:
 
 - fetches station config from `/api/companion/stations/{station_id}/config`
+- polls station config every `COMPANION_CONFIG_POLL_INTERVAL_SECONDS` and reloads adapters when it
+  changes
 - polls `/api/companion/stations/{station_id}/measurement-request?after_id=<id>` for
   barcode-created collection requests on measurement-capture stations
 - builds configured station adapters from the returned `adapters` list
@@ -41,6 +44,12 @@ exits. During startup it retries station config bootstrap until the API responds
 heartbeat failures, measurement-request poll failures, startup heartbeat failures, and outbox send
 failures are logged and retried instead of escaping the runtime loop. This prevents service restart
 churn while the API VM is restarted or a network path drops.
+
+Normal station configuration changes do not require a manual service restart. The companion keeps a
+fingerprint of the fetched station config, polls the API, and when the fingerprint changes it stops
+the current adapter tasks and starts a fresh adapter runtime from the new config. If a measurement
+collection is active during the reload, the partial request is closed with a `config_changed`
+diagnostic so the station does not mix values from two different configurations.
 
 Adapter configuration is also guarded. If station config or environment variables are invalid, the
 runtime queues `adapter.configuration_failed`, sends degraded heartbeats, and keeps the outbox/API

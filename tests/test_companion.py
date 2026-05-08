@@ -40,6 +40,7 @@ class FakeClient:
         fail_station_config_calls: int = 0,
         fail_measurement_request: bool = False,
         fail_heartbeat: bool = False,
+        station_config: dict | None = None,
     ) -> None:
         self.fail_first_event = fail_first_event
         self.fail_barcode_scan = fail_barcode_scan
@@ -51,20 +52,21 @@ class FakeClient:
         self.heartbeats = []
         self.events = []
         self.barcode_scans = []
-
-    async def fetch_station_config(self, station_id: int):
-        self.station_config_calls.append(station_id)
-        if self.fail_station_config_calls > 0:
-            self.fail_station_config_calls -= 1
-            raise httpx.ConnectError("offline")
-        return {
-            "station_id": station_id,
+        self.station_config = station_config or {
+            "station_id": 1,
             "name": "Station 1",
             "scanner_host": None,
             "scanner_port": None,
             "scanner_protocol": None,
             "measurement_types": [],
         }
+
+    async def fetch_station_config(self, station_id: int):
+        self.station_config_calls.append(station_id)
+        if self.fail_station_config_calls > 0:
+            self.fail_station_config_calls -= 1
+            raise httpx.ConnectError("offline")
+        return {**self.station_config, "station_id": station_id}
 
     async def fetch_measurement_request(self, station_id: int, after_id: int):
         if self.fail_measurement_request:
@@ -130,12 +132,14 @@ def test_config_from_settings_parses_station_id() -> None:
             station_id="42",
             server_url="http://server",
             companion_state_path="state.sqlite3",
+            companion_config_poll_interval_seconds=12.5,
             station_token="station-secret",
         )
     )
 
     assert config.station_id == 42
     assert config.server_url == "http://server"
+    assert config.config_poll_interval_seconds == 12.5
     assert config.station_token == "station-secret"
 
 
@@ -189,6 +193,35 @@ async def test_runtime_bootstrap_retries_station_config_when_api_is_unavailable(
 
     assert runtime.station_config is not None
     assert client.station_config_calls == [1, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_runtime_detects_station_config_change(tmp_path) -> None:
+    client = FakeClient(
+        station_config={
+            "station_id": 1,
+            "name": "Station 1",
+            "workflow_type": "measurement_capture",
+            "scanner_host": None,
+            "scanner_port": None,
+            "scanner_protocol": None,
+            "adapters": [{"type": "tcp_line", "name": "tcp-1", "enabled": False}],
+            "measurement_types": [],
+        }
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+
+    await runtime.fetch_station_config()
+    assert await runtime.refresh_station_config_once() is False
+    assert runtime.config_reload_event.is_set() is False
+
+    client.station_config = {
+        **client.station_config,
+        "adapters": [{"type": "tcp_line", "name": "tcp-1", "enabled": True}],
+    }
+
+    assert await runtime.refresh_station_config_once() is True
+    assert runtime.config_reload_event.is_set() is True
 
 
 @pytest.mark.asyncio

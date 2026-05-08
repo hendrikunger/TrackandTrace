@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import platform
 import socket
@@ -38,6 +39,7 @@ class CompanionRuntimeConfig:
     state_path: str
     heartbeat_interval_seconds: float
     outbox_retry_interval_seconds: float
+    config_poll_interval_seconds: float = 10.0
     measurement_aggregation_timeout_seconds: float = 300.0
     station_token: str | None = None
 
@@ -72,17 +74,44 @@ class CompanionRuntime:
         self.outbox = outbox or Outbox(config.state_path)
         self.adapters = adapters or []
         self.station_config: dict[str, Any] | None = None
+        self.station_config_fingerprint: str | None = None
+        self.config_reload_event = asyncio.Event()
         self.latest_rueckmeldenummer: str | None = None
         self.pending_measurement_request: PendingMeasurementRequest | None = None
         self.last_measurement_request_id = 0
 
     async def fetch_station_config(self) -> dict[str, Any]:
         self.station_config = await self.client.fetch_station_config(self.config.station_id)
+        self.station_config_fingerprint = self._station_config_fingerprint(self.station_config)
         logger.info(
             "Fetched station config",
             extra={"station_id": self.config.station_id},
         )
         return self.station_config
+
+    async def refresh_station_config_once(self) -> bool:
+        new_config = await self.client.fetch_station_config(self.config.station_id)
+        new_fingerprint = self._station_config_fingerprint(new_config)
+        if self.station_config_fingerprint == new_fingerprint:
+            self.station_config = new_config
+            return False
+
+        self.station_config = new_config
+        old_fingerprint = self.station_config_fingerprint
+        self.station_config_fingerprint = new_fingerprint
+        if old_fingerprint is not None:
+            self.config_reload_event.set()
+            logger.info(
+                "Station config changed; companion will reload adapters",
+                extra={"station_id": self.config.station_id},
+            )
+        return old_fingerprint is not None
+
+    @staticmethod
+    def _station_config_fingerprint(config: dict[str, Any] | None) -> str | None:
+        if config is None:
+            return None
+        return json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
 
     def build_heartbeat_payload(self, status: str = "online") -> dict[str, Any]:
         adapter_status: dict[str, Any] = {
@@ -359,27 +388,12 @@ class CompanionRuntime:
 
     async def run_forever(self) -> None:
         await self.bootstrap_until_ready()
-        adapters_ready = self.configure_adapters_safely()
-        if self.is_measurement_capture_workflow():
-            await self.sync_measurement_request_cursor()
-        try:
-            await self.send_heartbeat(status="starting" if adapters_ready else "degraded")
-        except CLIENT_FAILURES as exc:
-            logger.warning(
-                "Startup heartbeat failed; companion will keep running",
-                extra={
-                    "station_id": self.config.station_id,
-                    "error": exc.__class__.__name__,
-                },
-            )
-
         tasks = [
             asyncio.create_task(self.run_heartbeat_loop()),
             asyncio.create_task(self.run_outbox_loop()),
-            asyncio.create_task(self.run_adapters()),
+            asyncio.create_task(self.run_config_reload_loop()),
+            asyncio.create_task(self.run_station_runtime_loop()),
         ]
-        if self.is_measurement_capture_workflow():
-            tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -387,6 +401,68 @@ class CompanionRuntime:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def run_station_runtime_loop(self) -> None:
+        while True:
+            self.adapters = []
+            adapters_ready = self.configure_adapters_safely()
+            if self.is_measurement_capture_workflow():
+                await self.sync_measurement_request_cursor()
+            try:
+                await self.send_heartbeat(status="starting" if adapters_ready else "degraded")
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Runtime heartbeat failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+
+            runtime_tasks = [asyncio.create_task(self.run_adapters())]
+            if self.is_measurement_capture_workflow():
+                runtime_tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
+            reload_task = asyncio.create_task(self.config_reload_event.wait())
+
+            try:
+                done, _ = await asyncio.wait(
+                    [*runtime_tasks, reload_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if reload_task in done:
+                    self.config_reload_event.clear()
+                    if self.pending_measurement_request is not None:
+                        self.submit_pending_measurement(reason="config_changed")
+                    await self.stop_adapters()
+                    for task in runtime_tasks:
+                        task.cancel()
+                    await asyncio.gather(*runtime_tasks, return_exceptions=True)
+                    continue
+
+                reload_task.cancel()
+                await asyncio.gather(reload_task, return_exceptions=True)
+                for task in done:
+                    task.result()
+            finally:
+                reload_task.cancel()
+                for task in runtime_tasks:
+                    task.cancel()
+                await self.stop_adapters()
+                await asyncio.gather(reload_task, *runtime_tasks, return_exceptions=True)
+
+    async def run_config_reload_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.config.config_poll_interval_seconds)
+            try:
+                await self.refresh_station_config_once()
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Station config refresh failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
 
     async def bootstrap_until_ready(self) -> None:
         while True:
@@ -697,6 +773,7 @@ def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeCo
         state_path=settings.companion_state_path,
         heartbeat_interval_seconds=settings.companion_heartbeat_interval_seconds,
         outbox_retry_interval_seconds=settings.companion_outbox_retry_interval_seconds,
+        config_poll_interval_seconds=settings.companion_config_poll_interval_seconds,
         measurement_aggregation_timeout_seconds=(
             settings.companion_measurement_aggregation_timeout_seconds
         ),

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     companion_log_backup_count: int = 5
     companion_heartbeat_interval_seconds: float = 10.0
     companion_outbox_retry_interval_seconds: float = 2.0
+    companion_config_poll_interval_seconds: float = 10.0
     companion_measurement_aggregation_timeout_seconds: float = 300.0
     companion_auth_required: bool = False
     station_token: str | None = Field(default=None, repr=False)
