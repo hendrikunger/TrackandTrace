@@ -1,4 +1,5 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -132,6 +133,16 @@ class SerialRequestMeasurementAdapter(MeasurementAdapter):
 
         while not self._stop_event.is_set():
             try:
+                if not _measurement_needed(context, self.config.measurement_type):
+                    self._validate_idle_port()
+                    self._status = AdapterStatus(
+                        name=self.name,
+                        state=AdapterState.ONLINE,
+                        message="Waiting for measurement request",
+                        last_event_at=self._status.last_event_at,
+                    )
+                    await self._sleep_until_poll()
+                    continue
                 value = await asyncio.to_thread(self.read_once)
                 emitted = await self.emit_measurement(context, value)
                 self._status = AdapterStatus(
@@ -140,7 +151,7 @@ class SerialRequestMeasurementAdapter(MeasurementAdapter):
                     message="Measurement emitted" if emitted else "No serial response",
                     last_event_at=datetime.now(UTC) if emitted else self._status.last_event_at,
                 )
-            except (OSError, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+            except Exception as exc:  # noqa: BLE001 - pyserial/termios raise mixed errors.
                 self._status = AdapterStatus(
                     name=self.name,
                     state=AdapterState.DEGRADED,
@@ -162,6 +173,23 @@ class SerialRequestMeasurementAdapter(MeasurementAdapter):
 
     def health(self) -> AdapterStatus:
         return self._status
+
+    def _validate_idle_port(self) -> None:
+        if not _is_path_like_serial_port(self.config.port):
+            return
+        if not os.path.exists(self.config.port):
+            raise OSError(f"Serial port is not available: {self.config.port}.")
+        if not os.access(self.config.port, os.R_OK | os.W_OK):
+            raise PermissionError(f"Serial port is not readable/writable: {self.config.port}.")
+
+    async def _sleep_until_poll(self) -> None:
+        try:
+            await asyncio.wait_for(
+                self._stop_event.wait(),
+                timeout=self.config.poll_interval_seconds,
+            )
+        except TimeoutError:
+            return
 
     async def poll_once(self, context: AdapterContext) -> bool:
         if self.config.measurement_type not in context.parser_config.measurement_types:
@@ -224,3 +252,13 @@ def _load_serial_module() -> Any:
             "Serial adapters require the optional 'pyserial' package to be installed."
         ) from exc
     return serial
+
+
+def _measurement_needed(context: AdapterContext, measurement_type: str | None) -> bool:
+    if context.measurement_type_needed is not None:
+        return context.measurement_type_needed(measurement_type)
+    return context.measurement_needed is None or context.measurement_needed()
+
+
+def _is_path_like_serial_port(port: str) -> bool:
+    return port.startswith(("/", "./", "../"))

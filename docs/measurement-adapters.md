@@ -13,12 +13,27 @@ Every adapter implements:
 - `stop()`: request shutdown.
 - `health()`: return an `AdapterStatus` for companion heartbeats.
 
+The companion runtime supervises every adapter independently. Expected connection failures should
+be handled inside the adapter by setting `AdapterState.DEGRADED` and retrying. Unexpected exceptions
+are caught by the runtime supervisor, recorded as `adapter.failure`, and the adapter is started
+again. This means a failed SMB read, TCP disconnect, scanner command error, or serial exception
+should not restart the whole companion app.
+
+Adapters that intentionally complete once should set `restart_on_exit = False` or expose a
+`restart_on_exit` property. The built-in one-shot simulator does this so runtime supervision keeps
+the companion alive without repeatedly emitting the same test measurement.
+
 `AdapterContext` provides:
 
 - `station_id`: the current station.
 - `parser_config`: the allowed measurement type catalog assigned to the station.
 - `emit(event)`: async callback used to hand normalized measurements to the runtime.
+- `emit_raw_payload(event)`: async callback used for raw payload forwarding.
 - `emit_barcode_scan(event)`: async callback used by barcode scanner adapters.
+- `measurement_needed()`: tells polling/request adapters whether a barcode-created collection
+  window is active.
+- `measurement_type_needed(measurement_type)`: tells adapters whether their value is still missing
+  for the current request.
 
 The runtime queues emitted events into the local SQLite outbox and sends them to
 `POST /api/companion/measurements`. When a barcode/measurement request is active, the runtime can
@@ -51,9 +66,10 @@ MeasurementEvent(
 )
 ```
 
-The measurement type must exist in the station's allowed measurement type list. This lets a station
-send only `breite`, only `ueberstand`, or any future configured measurement type without changing
-the API contract.
+The measurement type must be in the station's effective measurement type list. Enabled adapter
+`measurement_type` values define that list when present; otherwise the companion falls back to the
+station measurement type allowlist. This lets a station send only `breite`, only `ueberstand`, or
+any future configured measurement type without changing the API contract.
 
 ## Built-In Adapters
 
@@ -75,6 +91,8 @@ adapter = SimulatorMeasurementAdapter.from_payload(
 
 `TcpLineMeasurementAdapter` connects to a TCP server, reads newline-delimited payloads, parses them,
 and emits canonical measurement events. If the connection drops, it marks itself degraded and retries.
+The runtime supervisor is an extra guard for failures outside the adapter's expected TCP/read/parse
+exceptions.
 
 Station-specific `adapter_config` example:
 
@@ -98,7 +116,9 @@ The TCP line payload is parsed by the same parser layer as simulator payloads. F
 
 ### Serial Line Adapter
 
-`SerialLineMeasurementAdapter` reads line-delimited values from a serial port. It requires the
+`SerialLineMeasurementAdapter` reads line-delimited values from a serial port and is available as a
+lower-level adapter class for tests/custom wiring. The station `adapter_config` factory currently
+creates `SerialRequestMeasurementAdapter` for configured serial devices. Serial support requires the
 optional `pyserial` package in the station companion environment:
 
 ```bash
@@ -155,7 +175,9 @@ Station-specific fields live on the station record, not in `adapter_config`:
 
 - `scanner_host`: expected scanner IP address, used as a peer filter when set.
 - `scanner_port`: local port the companion listens on. The scanner connects to this port.
-- `scanner_protocol`: informational protocol label such as `Keyence SR-X TCP`.
+- `scanner_protocol`: `Keyence SR-X TCP` enables the current TCP scanner adapter; `none`
+  disables the main scanner. Older `other` values are tolerated by the backend but are not offered in
+  the admin UI because no second scanner implementation exists yet.
 
 The companion automatically builds the scanner listener from these station fields.
 
@@ -179,6 +201,8 @@ SMB1 share. It is based on the working station behavior:
 - `pysmb` with SMB2 disabled.
 - `SMBConnection(..., use_ntlm_v2=False, is_direct_tcp=True)` on port 445.
 - reconnect when `echo(b"ping")` fails.
+- keep the polling loop alive when SMB operations raise connection, parse, delete, or library
+  exceptions; adapter health becomes degraded until the next successful poll.
 - poll `/ExcelAusgabe` and select the highest numbered file matching `_(\d+)\.csv$`.
 - decode as `cp1252`, take the last non-empty line, split by `;`, and read a configured column.
 - wait for an active kiosk measurement request before reading a file. This prevents the adapter from

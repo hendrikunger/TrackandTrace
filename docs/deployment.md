@@ -87,6 +87,58 @@ session. Use `-SkipUi` only for exceptional API-only diagnostics.
 PostgreSQL is expected to be installed and managed separately as a Windows service. The `.env`
 database settings must point at that PostgreSQL instance.
 
+### Windows Server Startup Tasks
+
+`deploy\install-server.ps1` registers Windows Scheduled Tasks instead of relying on a third-party
+service wrapper. The production server should have these tasks:
+
+| Task name | Trigger | Principal | Purpose |
+| --- | --- | --- | --- |
+| `SLF Track Trace API` | At system startup | `SYSTEM`, highest privileges | FastAPI server on `APP_PORT`, default `8081` |
+| `SLF Track Trace UI` | At system startup | `SYSTEM`, highest privileges | Central Panel admin/kiosk UI on `UI_PORT`, default `8080` |
+
+The task actions are created by the installer and point at the current release junction:
+
+```powershell
+C:\SLF\TrackTrace\current\env\python.exe `
+  -c "from slf_trace.api.main import run; run()"
+```
+
+```powershell
+C:\SLF\TrackTrace\current\env\python.exe `
+  -c "from slf_trace.ui.main import run; run()"
+```
+
+Useful operator commands:
+
+```powershell
+Get-ScheduledTask "SLF Track Trace API", "SLF Track Trace UI"
+Get-ScheduledTaskInfo "SLF Track Trace API"
+Get-ScheduledTaskInfo "SLF Track Trace UI"
+```
+
+```powershell
+Start-ScheduledTask "SLF Track Trace API"
+Start-ScheduledTask "SLF Track Trace UI"
+```
+
+```powershell
+Stop-ScheduledTask "SLF Track Trace API"
+Stop-ScheduledTask "SLF Track Trace UI"
+```
+
+After changing `C:\SLF\TrackTrace\current\.env`, restart both tasks:
+
+```powershell
+Stop-ScheduledTask "SLF Track Trace UI"
+Stop-ScheduledTask "SLF Track Trace API"
+Start-ScheduledTask "SLF Track Trace API"
+Start-ScheduledTask "SLF Track Trace UI"
+```
+
+The server UI task is the normal production path. Do not use `-SkipUi` unless this host is
+intentionally API-only for diagnostics.
+
 ## Windows 11 Station Install
 
 Use `deploy/install-panel.ps1` on Windows touch panel machines.
@@ -102,6 +154,79 @@ Responsibilities:
 The Windows panel can use built-in Scheduled Tasks, avoiding third-party service wrappers in the
 offline environment. The normal production station does not run the Panel UI locally. Use
 `-InstallLocalUi` only for temporary diagnostics or fallback operation.
+
+### Windows 11 Station Startup Tasks
+
+`deploy\install-panel.ps1` registers the station companion as a Windows Scheduled Task:
+
+| Task name | Trigger | Principal | Purpose |
+| --- | --- | --- | --- |
+| `SLF Track Trace Companion` | At system startup | `SYSTEM`, highest privileges | Local scanner/measurement adapter runtime |
+
+The normal task action is:
+
+```powershell
+C:\SLF\TrackTrace\current\env\Scripts\slf-trace-companion.exe
+```
+
+with working directory:
+
+```powershell
+C:\SLF\TrackTrace\current
+```
+
+The companion task reads `C:\SLF\TrackTrace\current\.env`. Minimum station values:
+
+```env
+SERVER_URL=http://<server-host>:8081
+STATION_ID=<station-id>
+STATION_TOKEN=<token-created-in-admin-ui>
+```
+
+Manage and inspect the companion task:
+
+```powershell
+Get-ScheduledTask "SLF Track Trace Companion"
+Get-ScheduledTaskInfo "SLF Track Trace Companion"
+Start-ScheduledTask "SLF Track Trace Companion"
+Stop-ScheduledTask "SLF Track Trace Companion"
+```
+
+Production Windows 11 stations should not run a local Panel UI task. If a diagnostic local UI was
+installed earlier, remove it:
+
+```powershell
+Unregister-ScheduledTask -TaskName "SLF Track Trace UI" -Confirm:$false
+```
+
+The kiosk browser is a separate user-logon task because it must run in an interactive desktop
+session. Create it for the dedicated panel user, not as `SYSTEM`:
+
+```powershell
+$TaskName = "SLF Track Trace Kiosk Browser"
+$KioskUser = "<domain-or-machine>\<panel-user>"
+$Url = "http://<server-host>:8080/kiosk?station_id=<station-id>"
+$Edge = "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"
+if (-not (Test-Path $Edge)) {
+  $Edge = "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+}
+
+$Action = New-ScheduledTaskAction `
+  -Execute $Edge `
+  -Argument "--kiosk $Url --edge-kiosk-type=fullscreen --no-first-run"
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $KioskUser
+$Principal = New-ScheduledTaskPrincipal -UserId $KioskUser -LogonType Interactive
+
+Register-ScheduledTask `
+  -TaskName $TaskName `
+  -Action $Action `
+  -Trigger $Trigger `
+  -Principal $Principal `
+  -Force
+```
+
+For locked-down panels, combine the browser task with Windows Assigned Access for the same panel
+user. The browser task only opens Edge; Assigned Access controls whether the user can leave Edge.
 
 ## Ubuntu 24.04 Station Install
 
@@ -120,6 +245,22 @@ and Panel UI; the station runs only the companion because scanner and measuremen
 local to the touch PC. Use `INSTALL_LOCAL_UI=true` only for temporary development or fallback
 diagnostics.
 
+Kiosk reaction time is controlled on the central server/UI, not per station. Defaults are tuned for
+touch panels and are safe for about 20 panels on normal PostgreSQL server hardware:
+
+```dotenv
+KIOSK_SCANNER_POLL_MS=250
+KIOSK_MEASUREMENT_POLL_MS=500
+```
+
+`KIOSK_SCANNER_POLL_MS` runs continuously for each open kiosk. `KIOSK_MEASUREMENT_POLL_MS` runs only
+while a barcode is waiting for adapter values. Tune these values in the server/UI environment if
+production load requires it.
+
+Migration `0011_kiosk_latency_indexes` adds indexes for latest scanner payload and latest
+measurement lookups. Run database migrations before enabling the faster polling values in a
+production rollout.
+
 To also configure graphical kiosk boot on a GDM-based Ubuntu desktop, run the installer with:
 
 ```bash
@@ -130,7 +271,7 @@ This installs `/usr/local/bin/slf-trace-kiosk-browser`, adds an autostart entry 
 creates `/etc/slf-trace/kiosk.env`, and enables GDM automatic login for that user. The launcher opens:
 
 ```text
-http://<central-ui-host>:5006/kiosk?station_id=<STATION_ID>
+http://<central-ui-host>:8080/kiosk?station_id=<STATION_ID>
 ```
 
 using Firefox, Chromium, or Chrome, whichever is installed first in that order.
@@ -141,8 +282,8 @@ Keep secrets in `/etc/slf-trace/panel.env`. The desktop kiosk user reads only
 
 ```dotenv
 STATION_ID=3
-KIOSK_BASE_URL=http://api.home.io:5006
-KIOSK_URL=http://api.home.io:5006/kiosk?station_id=3
+KIOSK_BASE_URL=http://api.home.io:8080
+KIOSK_URL=http://api.home.io:8080/kiosk?station_id=3
 ```
 
 If you are deliberately reinstalling the same `VERSION` during validation, add
@@ -215,7 +356,7 @@ Edit `/etc/slf-trace/panel.env` before starting the services. Minimum values:
 
 ```dotenv
 APP_ENV=production
-SERVER_URL=http://api.home.io:8000
+SERVER_URL=http://api.home.io:8081
 STATION_ID=<station-id>
 STATION_TOKEN=<token-if-api-token-enforcement-is-enabled>
 DATABASE_HOST=<postgres-host>
@@ -225,14 +366,28 @@ DATABASE_USER=<database-user>
 DATABASE_PASSWORD=<database-password>
 COMPANION_STATE_PATH=/opt/slf-trace/state/companion_state.sqlite3
 COMPANION_LOG_PATH=/opt/slf-trace/logs/slf-trace-companion.log
+COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS=2
+COMPANION_CONFIG_POLL_INTERVAL_SECONDS=10
 ```
+
+Barcode scans are sent to the API immediately for fast kiosk feedback. If the API is unavailable,
+the companion falls back to its local SQLite outbox and retries according to
+`COMPANION_OUTBOX_RETRY_INTERVAL_SECONDS`.
+
+The companion also polls station configuration from the API according to
+`COMPANION_CONFIG_POLL_INTERVAL_SECONDS`. Adapter enable/disable changes, adapter settings,
+measurement types, and workflow changes are picked up by the running companion without a manual
+service restart. Restart the station service only when the companion code, Python environment, or
+local service environment changes. Measurement-adapter-only changes reload those adapters without
+cycling the barcode scanner; scanner settings and scanner-capable workflow changes do restart the
+scanner runtime.
 
 Edit `/etc/slf-trace/kiosk.env` for the desktop browser autostart:
 
 ```dotenv
 STATION_ID=<station-id>
-KIOSK_BASE_URL=http://api.home.io:5006
-KIOSK_URL=http://api.home.io:5006/kiosk?station_id=<station-id>
+KIOSK_BASE_URL=http://api.home.io:8080
+KIOSK_URL=http://api.home.io:8080/kiosk?station_id=<station-id>
 ```
 
 Start and validate services:
@@ -242,7 +397,7 @@ sudo systemctl restart slf-trace-companion.service
 systemctl is-active slf-trace-companion.service
 systemctl is-enabled slf-trace-companion.service
 systemctl is-enabled slf-trace-ui.service || true
-curl --max-time 20 -fsS "http://api.home.io:5006/kiosk?station_id=<station-id>" >/tmp/kiosk.html
+curl --max-time 20 -fsS "http://api.home.io:8080/kiosk?station_id=<station-id>" >/tmp/kiosk.html
 journalctl -u slf-trace-companion.service --since "2 minutes ago" --no-pager
 ```
 
@@ -257,7 +412,7 @@ After the station returns:
 ```bash
 systemctl is-active slf-trace-companion.service display-manager
 systemctl is-active slf-trace-ui.service || true
-curl --max-time 20 -fsS "http://api.home.io:5006/kiosk?station_id=<station-id>" >/tmp/kiosk.html
+curl --max-time 20 -fsS "http://api.home.io:8080/kiosk?station_id=<station-id>" >/tmp/kiosk.html
 pgrep -af "firefox|chromium|chrome|slf-trace-kiosk"
 loginctl list-sessions --no-legend
 journalctl -u slf-trace-companion.service --since "5 minutes ago" --no-pager
@@ -333,11 +488,18 @@ The script:
 
 - fetches and fast-forwards the configured branch, defaulting to `origin/main`
 - refuses to continue if the server checkout has local changes
+- refuses to run on a host that has `slf-trace-companion.service` installed, because that host is a
+  station/panel machine rather than the API VM
 - reinstalls the package into `/opt/slf-trace/env`
 - runs `alembic upgrade head`
-- restarts `slf-trace-api.service` and `slf-trace-ui.service`
+- restarts only `slf-trace-api.service` and `slf-trace-ui.service` on the API VM
 - writes an update log under `/opt/slf-trace/logs/`
 - runs a local API health check
+
+This server update does not SSH to stations, does not restart `slf-trace-companion.service`, and
+does not send scanner startup/shutdown commands. It can briefly interrupt the central UI/WebSocket
+and API polling while services restart, so admin health may look stale until the next companion
+heartbeat arrives.
 
 This update route is for the online test server only. Offline production should use versioned
 release bundles so rollback is just a `current` link switch plus service restart.

@@ -78,26 +78,29 @@ if [[ "$INSTALL_KIOSK" == "true" ]]; then
   if [[ -f /etc/slf-trace/panel.env ]]; then
     kiosk_station_id="$(sed -n 's/^STATION_ID=//p' /etc/slf-trace/panel.env | tail -n 1)"
     kiosk_server_url="$(sed -n 's/^SERVER_URL=//p' /etc/slf-trace/panel.env | tail -n 1)"
+    kiosk_ui_port="$(sed -n 's/^UI_PORT=//p' /etc/slf-trace/panel.env | tail -n 1)"
   fi
+  kiosk_ui_port="${kiosk_ui_port:-8080}"
   kiosk_base_url=""
   if [[ -n "$kiosk_server_url" ]]; then
-    kiosk_base_url="$(python3 - "$kiosk_server_url" <<'PY'
+    kiosk_base_url="$(python3 - "$kiosk_server_url" "$kiosk_ui_port" <<'PY'
 from urllib.parse import urlsplit, urlunsplit
 import sys
 
 url = sys.argv[1]
+ui_port = sys.argv[2]
 parts = urlsplit(url)
 if not parts.scheme or not parts.hostname:
     raise SystemExit(0)
 host = parts.hostname
 if ":" in host and not host.startswith("["):
     host = f"[{host}]"
-print(urlunsplit((parts.scheme, f"{host}:5006", "", "", "")))
+print(urlunsplit((parts.scheme, f"{host}:{ui_port}", "", "", "")))
 PY
 )"
   fi
   if [[ -n "$kiosk_station_id" ]]; then
-    kiosk_base_url="${kiosk_base_url:-http://127.0.0.1:5006}"
+    kiosk_base_url="${kiosk_base_url:-http://127.0.0.1:${kiosk_ui_port}}"
     kiosk_url="$kiosk_base_url/kiosk?station_id=$kiosk_station_id"
   else
     kiosk_url=""

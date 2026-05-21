@@ -10,10 +10,13 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     app_host: str = "0.0.0.0"
-    app_port: int = 8000
+    app_port: int = 8081
     ui_host: str = "127.0.0.1"
-    ui_port: int = 5006
+    ui_port: int = 8080
     ui_autoreload: bool = True
+    ui_websocket_origins: str | None = None
+    kiosk_scanner_poll_ms: int = 250
+    kiosk_measurement_poll_ms: int = 500
 
     database_host: str = "localhost"
     database_port: int = 5432
@@ -22,13 +25,14 @@ class Settings(BaseSettings):
     database_password: str = Field(default="", repr=False)
 
     station_id: str | None = None
-    server_url: str = "http://localhost:8000"
+    server_url: str = "http://localhost:8081"
     companion_state_path: str = "companion_state.sqlite3"
     companion_log_path: str | None = "logs/slf-trace-companion.log"
     companion_log_max_bytes: int = 5_000_000
     companion_log_backup_count: int = 5
     companion_heartbeat_interval_seconds: float = 10.0
     companion_outbox_retry_interval_seconds: float = 2.0
+    companion_config_poll_interval_seconds: float = 10.0
     companion_measurement_aggregation_timeout_seconds: float = 300.0
     companion_auth_required: bool = False
     station_token: str | None = Field(default=None, repr=False)

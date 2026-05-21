@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_SERVER_URL = "http://localhost:8000"
+DEFAULT_SERVER_URL = "http://localhost:8081"
 DEFAULT_STATION_ID = 1
 DEFAULT_RUECKMELDENUMMER = "RM-DEV-0001"
 DEFAULT_MEASUREMENT_TYPE = "breite"

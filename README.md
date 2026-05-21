@@ -33,23 +33,31 @@ The system captures barcode scans and measurement results for individual physica
 
 ## Development Status
 
-This repository is in early scaffold development. See `docs/architecture.md` for the implementation
-plan. For station workflows, see `docs/workflows.md`. For station kiosk startup, see
-`docs/kiosk-startup.md`. For the no-hardware development and CI strategy, including station
-simulators, see `docs/test-strategy.md`.
+This repository contains the current FastAPI ingestion API, PostgreSQL schema migrations,
+Panel-based admin/kiosk UI, station companion runtime, device adapters, and simulator tooling. See
+`docs/architecture.md` for the current architecture. For station workflows, see
+`docs/workflows.md`. For station kiosk startup, see `docs/kiosk-startup.md`. For the no-hardware
+development and CI strategy, including station simulators, see `docs/test-strategy.md`.
 
 ## Start and Test Locally
 
-Use Python 3.12 from WSL. The project is packaged with console scripts, so install it in editable
-mode with the development dependencies:
+Use Python 3.12. In the current local Codex/macOS environment, commands are usually run through the
+`slf` Mamba environment:
 
 ```bash
-mamba activate slf_trace
+/Users/unhe/miniforge3/bin/mamba activate slf
 python -m pip install -e ".[dev]"
 ```
 
-If you are not using Mamba, use any Python 3.12 virtual environment and run the same `pip install`
-command inside it.
+When running commands from a non-interactive shell, use:
+
+```bash
+/Users/unhe/miniforge3/bin/mamba run -n slf pytest
+/Users/unhe/miniforge3/bin/mamba run -n slf ruff check .
+```
+
+Older WSL environments may still use a `slf_trace` environment. If you are not using Mamba, use any
+Python 3.12 virtual environment and run the same `pip install` command inside it.
 
 Create a local `.env` from `.env.example` and set the PostgreSQL password:
 
@@ -60,7 +68,8 @@ cp .env.example .env
 Local `.env` files are ignored by git. The important values are:
 
 - `APP_HOST` and `APP_PORT` for the FastAPI server bind address.
-- `UI_HOST`, `UI_PORT`, and `UI_AUTORELOAD` for the Panel supervisor/admin UI.
+- `UI_HOST`, `UI_PORT`, `UI_AUTORELOAD`, and optional `UI_WEBSOCKET_ORIGINS` for the Panel
+  supervisor/admin UI.
 - `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, and `DATABASE_PASSWORD` for
   the PostgreSQL database.
 - `STATION_ID` and `SERVER_URL` when running a station companion process.
@@ -77,11 +86,11 @@ Start the API:
 slf-trace-api
 ```
 
-By default, the API listens on `http://localhost:8000`. Useful URLs:
+By default, the API listens on `http://localhost:8081`. Useful URLs:
 
-- `http://localhost:8000/health?database=false` checks the service without touching PostgreSQL.
-- `http://localhost:8000/health` checks the service and database connection.
-- `http://localhost:8000/docs` opens the FastAPI Swagger UI.
+- `http://localhost:8081/health?database=false` checks the service without touching PostgreSQL.
+- `http://localhost:8081/health` checks the service and database connection.
+- `http://localhost:8081/docs` opens the FastAPI Swagger UI.
 
 Start the supervisor/admin UI in a second terminal:
 

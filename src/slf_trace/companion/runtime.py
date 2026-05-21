@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import platform
 import socket
@@ -22,12 +23,14 @@ from slf_trace.companion.adapters.factory import (
     build_adapters_from_config,
     build_scanner_adapter_from_station_config,
 )
+from slf_trace.companion.adapters.scanner import TcpBarcodeScannerAdapter
 from slf_trace.companion.client import CompanionClient
 from slf_trace.companion.outbox import Outbox, OutboxEvent
 from slf_trace.config import Settings, get_settings
 from slf_trace.parsing import ParserConfig
 
 logger = logging.getLogger(__name__)
+CLIENT_FAILURES = (httpx.HTTPError, OSError, ValueError)
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class CompanionRuntimeConfig:
     state_path: str
     heartbeat_interval_seconds: float
     outbox_retry_interval_seconds: float
+    config_poll_interval_seconds: float = 10.0
     measurement_aggregation_timeout_seconds: float = 300.0
     station_token: str | None = None
 
@@ -70,22 +74,53 @@ class CompanionRuntime:
         )
         self.outbox = outbox or Outbox(config.state_path)
         self.adapters = adapters or []
+        self.active_scanner_adapter: MeasurementAdapter | None = None
+        self.active_scanner_task: asyncio.Task | None = None
+        self.active_scanner_fingerprint: str | None = None
         self.station_config: dict[str, Any] | None = None
+        self.station_config_fingerprint: str | None = None
+        self.config_reload_event = asyncio.Event()
         self.latest_rueckmeldenummer: str | None = None
         self.pending_measurement_request: PendingMeasurementRequest | None = None
         self.last_measurement_request_id = 0
 
     async def fetch_station_config(self) -> dict[str, Any]:
         self.station_config = await self.client.fetch_station_config(self.config.station_id)
+        self.station_config_fingerprint = self._station_config_fingerprint(self.station_config)
         logger.info(
             "Fetched station config",
             extra={"station_id": self.config.station_id},
         )
         return self.station_config
 
+    async def refresh_station_config_once(self) -> bool:
+        new_config = await self.client.fetch_station_config(self.config.station_id)
+        new_fingerprint = self._station_config_fingerprint(new_config)
+        if self.station_config_fingerprint == new_fingerprint:
+            self.station_config = new_config
+            return False
+
+        self.station_config = new_config
+        old_fingerprint = self.station_config_fingerprint
+        self.station_config_fingerprint = new_fingerprint
+        if old_fingerprint is not None:
+            self.config_reload_event.set()
+            logger.info(
+                "Station config changed; companion will reload adapters",
+                extra={"station_id": self.config.station_id},
+            )
+        return old_fingerprint is not None
+
+    @staticmethod
+    def _station_config_fingerprint(config: dict[str, Any] | None) -> str | None:
+        if config is None:
+            return None
+        return json.dumps(config, sort_keys=True, separators=(",", ":"), default=str)
+
     def build_heartbeat_payload(self, status: str = "online") -> dict[str, Any]:
         adapter_status: dict[str, Any] = {
             "runtime": status,
+            "workflow_type": self.workflow_type(),
             "os": platform.platform(),
             "python": platform.python_version(),
             "outbox_pending": self.outbox.count(),
@@ -156,6 +191,23 @@ class CompanionRuntime:
     def enqueue_barcode_scan_event(self, event: BarcodeScanEvent) -> int:
         return self.enqueue_event("/api/companion/barcode-scans", event.as_payload())
 
+    async def send_barcode_scan_event_now(self, event: BarcodeScanEvent) -> bool:
+        payload = event.as_payload()
+        try:
+            await self.client.post_event("/api/companion/barcode-scans", payload)
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Immediate barcode scan send failed; queued for retry",
+                extra={
+                    "station_id": event.station_id,
+                    "source_type": event.source_type,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.enqueue_event("/api/companion/barcode-scans", payload)
+            return False
+        return True
+
     def enqueue_station_event(
         self,
         *,
@@ -193,10 +245,24 @@ class CompanionRuntime:
         else:
             await self.send_progress_heartbeat()
 
+    async def handle_adapter_station_event(
+        self,
+        event_type: str,
+        severity: str,
+        message: str,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        self.enqueue_station_event(
+            event_type=event_type,
+            severity=severity,
+            message=message,
+            context=context,
+        )
+
     async def send_progress_heartbeat(self) -> None:
         try:
             await self.send_heartbeat(status="online")
-        except (httpx.HTTPError, OSError) as exc:
+        except CLIENT_FAILURES as exc:
             logger.warning(
                 "Progress heartbeat failed",
                 extra={"station_id": self.config.station_id, "error": exc.__class__.__name__},
@@ -293,7 +359,7 @@ class CompanionRuntime:
         self.enqueue_raw_payload_event(event)
 
     async def handle_barcode_scan_event(self, event: BarcodeScanEvent) -> None:
-        self.enqueue_barcode_scan_event(event)
+        await self.send_barcode_scan_event_now(event)
 
     async def flush_outbox_once(self, limit: int = 50) -> int:
         sent_count = 0
@@ -306,7 +372,7 @@ class CompanionRuntime:
         self.outbox.mark_attempt(event.id)
         try:
             await self.client.post_event(event.endpoint, event.payload)
-        except (httpx.HTTPError, OSError) as exc:
+        except CLIENT_FAILURES as exc:
             logger.warning(
                 "Outbox event send failed",
                 extra={
@@ -325,33 +391,135 @@ class CompanionRuntime:
         return True
 
     async def run_forever(self) -> None:
-        await self.fetch_station_config()
-        self.configure_adapters_from_station_config()
-        await self.sync_measurement_request_cursor()
-        await self.send_heartbeat(status="starting")
-
+        await self.bootstrap_until_ready()
         tasks = [
             asyncio.create_task(self.run_heartbeat_loop()),
             asyncio.create_task(self.run_outbox_loop()),
-            asyncio.create_task(self.run_measurement_request_loop()),
-            asyncio.create_task(self.run_adapters()),
+            asyncio.create_task(self.run_config_reload_loop()),
+            asyncio.create_task(self.run_station_runtime_loop()),
         ]
         try:
             await asyncio.gather(*tasks)
         finally:
             await self.stop_adapters()
+            await self.stop_scanner_runtime()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def stop_adapters(self) -> None:
+    async def run_station_runtime_loop(self) -> None:
+        while True:
+            self.adapters = []
+            adapters_ready = self.configure_adapters_safely()
+            measurement_adapters = self.measurement_adapters()
+            await self.ensure_scanner_runtime()
+            self.adapters = [*measurement_adapters]
+            if self.active_scanner_adapter is not None:
+                self.adapters.append(self.active_scanner_adapter)
+            if self.is_measurement_capture_workflow():
+                await self.sync_measurement_request_cursor()
+            try:
+                await self.send_heartbeat(status="starting" if adapters_ready else "degraded")
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Runtime heartbeat failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+
+            runtime_tasks = [asyncio.create_task(self.run_adapters(measurement_adapters))]
+            if self.is_measurement_capture_workflow():
+                runtime_tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
+            reload_task = asyncio.create_task(self.config_reload_event.wait())
+
+            try:
+                done, _ = await asyncio.wait(
+                    [*runtime_tasks, reload_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if reload_task in done:
+                    self.config_reload_event.clear()
+                    if self.pending_measurement_request is not None:
+                        self.submit_pending_measurement(reason="config_changed")
+                    await self.stop_adapters(measurement_adapters)
+                    for task in runtime_tasks:
+                        task.cancel()
+                    await asyncio.gather(*runtime_tasks, return_exceptions=True)
+                    continue
+
+                reload_task.cancel()
+                await asyncio.gather(reload_task, return_exceptions=True)
+                for task in done:
+                    task.result()
+            finally:
+                reload_task.cancel()
+                for task in runtime_tasks:
+                    task.cancel()
+                await self.stop_adapters(measurement_adapters)
+                await asyncio.gather(reload_task, *runtime_tasks, return_exceptions=True)
+
+    async def run_config_reload_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.config.config_poll_interval_seconds)
+            try:
+                await self.refresh_station_config_once()
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Station config refresh failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+
+    async def bootstrap_until_ready(self) -> None:
+        while True:
+            try:
+                await self.fetch_station_config()
+                return
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Station config fetch failed; companion will retry",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                await asyncio.sleep(self.config.heartbeat_interval_seconds)
+
+    def configure_adapters_safely(self) -> bool:
+        try:
+            self.configure_adapters_from_station_config()
+        except Exception as exc:  # noqa: BLE001 - config/env errors should not restart companion.
+            logger.exception(
+                "Adapter configuration failed; companion will keep running degraded",
+                extra={
+                    "station_id": self.config.station_id,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.adapters = []
+            self.enqueue_station_event(
+                event_type="adapter.configuration_failed",
+                severity="error",
+                message="Adapter configuration failed; companion is running without adapters.",
+                context={"error": exc.__class__.__name__, "message": str(exc)},
+            )
+            return False
+        return True
+
+    async def stop_adapters(self, adapters: list[MeasurementAdapter] | None = None) -> None:
+        adapters_to_stop = self.adapters if adapters is None else adapters
         await asyncio.gather(
-            *(adapter.stop() for adapter in self.adapters),
+            *(adapter.stop() for adapter in adapters_to_stop),
             return_exceptions=True,
         )
 
-    async def run_adapters(self) -> None:
-        if not self.adapters:
+    async def run_adapters(self, adapters: list[MeasurementAdapter] | None = None) -> None:
+        adapters_to_run = self.adapters if adapters is None else adapters
+        if not adapters_to_run:
             await asyncio.Future()
 
         parser_config = self._parser_config_from_station_config()
@@ -361,34 +529,172 @@ class CompanionRuntime:
             parser_config=parser_config,
             emit_raw_payload=self.handle_raw_payload_event,
             emit_barcode_scan=self.handle_barcode_scan_event,
+            emit_station_event=self.handle_adapter_station_event,
             measurement_needed=self.measurement_needed,
             measurement_type_needed=self.measurement_type_needed,
         )
-        await asyncio.gather(*(adapter.start(context) for adapter in self.adapters))
+        await asyncio.gather(
+            *(self.run_adapter_supervisor(adapter, context) for adapter in adapters_to_run)
+        )
+
+    def measurement_adapters(self) -> list[MeasurementAdapter]:
+        return [adapter for adapter in self.adapters if not self.is_scanner_adapter(adapter)]
+
+    @staticmethod
+    def is_scanner_adapter(adapter: MeasurementAdapter) -> bool:
+        return isinstance(adapter, TcpBarcodeScannerAdapter)
+
+    async def ensure_scanner_runtime(self) -> None:
+        scanner_adapter = self.configured_scanner_adapter()
+        scanner_fingerprint = self.configured_scanner_fingerprint(scanner_adapter)
+        if (
+            scanner_fingerprint == self.active_scanner_fingerprint
+            and self.active_scanner_task is not None
+            and not self.active_scanner_task.done()
+        ):
+            return
+
+        await self.stop_scanner_runtime()
+        if scanner_adapter is None:
+            return
+
+        self.active_scanner_adapter = scanner_adapter
+        self.active_scanner_fingerprint = scanner_fingerprint
+        self.active_scanner_task = asyncio.create_task(self.run_adapters([scanner_adapter]))
+
+    async def stop_scanner_runtime(self) -> None:
+        if self.active_scanner_adapter is not None:
+            await self.active_scanner_adapter.stop()
+        if self.active_scanner_task is not None:
+            self.active_scanner_task.cancel()
+            await asyncio.gather(self.active_scanner_task, return_exceptions=True)
+        self.active_scanner_adapter = None
+        self.active_scanner_task = None
+        self.active_scanner_fingerprint = None
+
+    def configured_scanner_adapter(self) -> MeasurementAdapter | None:
+        if self.workflow_type() not in {"measurement_capture", "label_printing"}:
+            return None
+        return build_scanner_adapter_from_station_config(self.station_config or {})
+
+    def configured_scanner_fingerprint(
+        self,
+        scanner_adapter: MeasurementAdapter | None,
+    ) -> str | None:
+        if scanner_adapter is None:
+            return None
+        scanner_config = {
+            key: value
+            for key, value in (self.station_config or {}).items()
+            if key.startswith("scanner_")
+        }
+        scanner_config["workflow_type"] = self.workflow_type()
+        return self._station_config_fingerprint(scanner_config)
+
+    async def run_adapter_supervisor(
+        self,
+        adapter: MeasurementAdapter,
+        context: AdapterContext,
+    ) -> None:
+        while True:
+            try:
+                await adapter.start(context)
+                if not adapter.restart_on_exit:
+                    logger.info(
+                        "Adapter completed and will remain stopped",
+                        extra={"station_id": self.config.station_id, "adapter": adapter.name},
+                    )
+                    await asyncio.Future()
+                logger.warning(
+                    "Adapter stopped unexpectedly; companion will restart it",
+                    extra={"station_id": self.config.station_id, "adapter": adapter.name},
+                )
+                self.enqueue_station_event(
+                    event_type="adapter.stopped",
+                    severity="warning",
+                    message="Adapter stopped unexpectedly and will be restarted.",
+                    context={"adapter": adapter.name},
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - adapter libraries raise mixed errors.
+                logger.exception(
+                    "Adapter crashed; companion will restart it",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "adapter": adapter.name,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                self.enqueue_station_event(
+                    event_type="adapter.failure",
+                    severity="error",
+                    message="Adapter crashed and will be restarted.",
+                    context={"adapter": adapter.name, "error": exc.__class__.__name__},
+                )
+            await asyncio.sleep(self.config.outbox_retry_interval_seconds)
 
     async def run_heartbeat_loop(self) -> None:
         while True:
-            await self.send_heartbeat(status="online")
+            try:
+                await self.send_heartbeat(status="online")
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Heartbeat failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
             await asyncio.sleep(self.config.heartbeat_interval_seconds)
 
     async def run_outbox_loop(self) -> None:
         while True:
-            await self.flush_outbox_once()
+            try:
+                await self.flush_outbox_once()
+            except Exception as exc:  # noqa: BLE001 - local state errors should not stop runtime.
+                logger.exception(
+                    "Outbox flush failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
             await asyncio.sleep(self.config.outbox_retry_interval_seconds)
 
     async def run_measurement_request_loop(self) -> None:
         while True:
-            await self.fetch_measurement_request_once()
-            if self.pending_request_timed_out():
-                self.submit_pending_measurement(reason="timeout")
+            try:
+                await self.fetch_measurement_request_once()
+                if self.pending_request_timed_out():
+                    self.submit_pending_measurement(reason="timeout")
+            except Exception as exc:  # noqa: BLE001 - polling loop is a process safety boundary.
+                logger.exception(
+                    "Measurement request loop failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
             await asyncio.sleep(0.5)
 
     async def sync_measurement_request_cursor(self, *, max_requests: int = 1000) -> None:
         for _ in range(max_requests):
-            request = await self.client.fetch_measurement_request(
-                self.config.station_id,
-                self.last_measurement_request_id,
-            )
+            try:
+                request = await self.client.fetch_measurement_request(
+                    self.config.station_id,
+                    self.last_measurement_request_id,
+                )
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Measurement request cursor sync failed; companion will continue",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "request_id": self.last_measurement_request_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                return
             request_id = request.get("request_id")
             if request_id is None:
                 return
@@ -402,10 +708,21 @@ class CompanionRuntime:
         )
 
     async def fetch_measurement_request_once(self) -> bool:
-        request = await self.client.fetch_measurement_request(
-            self.config.station_id,
-            self.last_measurement_request_id,
-        )
+        try:
+            request = await self.client.fetch_measurement_request(
+                self.config.station_id,
+                self.last_measurement_request_id,
+            )
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Measurement request poll failed; companion will keep running",
+                extra={
+                    "station_id": self.config.station_id,
+                    "request_id": self.last_measurement_request_id,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            return False
         request_id = request.get("request_id")
         if request_id is None:
             return False
@@ -477,6 +794,23 @@ class CompanionRuntime:
         return ParserConfig(measurement_types=measurement_types)
 
     def configure_adapters_from_station_config(self) -> None:
+        if not self.is_measurement_capture_workflow():
+            logger.info(
+                "Workflow has no measurement runtime behavior; companion will run scanner only",
+                extra={
+                    "station_id": self.config.station_id,
+                    "workflow_type": self.workflow_type(),
+                },
+            )
+            self.adapters = []
+            if self.workflow_type() == "label_printing":
+                scanner_adapter = build_scanner_adapter_from_station_config(
+                    self.station_config or {}
+                )
+                if scanner_adapter is not None:
+                    self.adapters.append(scanner_adapter)
+            return
+
         if not self.adapters:
             adapter_configs = (self.station_config or {}).get("adapters", [])
             self.adapters = build_adapters_from_config(adapter_configs)
@@ -485,6 +819,13 @@ class CompanionRuntime:
             adapter.name != scanner_adapter.name for adapter in self.adapters
         ):
             self.adapters.append(scanner_adapter)
+
+    def workflow_type(self) -> str:
+        value = str((self.station_config or {}).get("workflow_type") or "measurement_capture")
+        return normalize_workflow_type(value)
+
+    def is_measurement_capture_workflow(self) -> bool:
+        return self.workflow_type() == "measurement_capture"
 
 
 def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeConfig:
@@ -498,11 +839,23 @@ def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeCo
         state_path=settings.companion_state_path,
         heartbeat_interval_seconds=settings.companion_heartbeat_interval_seconds,
         outbox_retry_interval_seconds=settings.companion_outbox_retry_interval_seconds,
+        config_poll_interval_seconds=settings.companion_config_poll_interval_seconds,
         measurement_aggregation_timeout_seconds=(
             settings.companion_measurement_aggregation_timeout_seconds
         ),
         station_token=settings.station_token,
     )
+
+
+def normalize_workflow_type(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "measurement_capture": "measurement_capture",
+        "measurement": "measurement_capture",
+        "label_printing": "label_printing",
+        "laser_marking": "laser_marking",
+    }
+    return aliases.get(normalized, normalized or "measurement_capture")
 
 
 def configure_logging(settings: Settings | None = None) -> None:

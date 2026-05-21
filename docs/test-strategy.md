@@ -20,9 +20,12 @@ python -m compileall src tests
 - Barcode scan and measurement API behavior, including duplicate idempotency responses.
 - Parser behavior for key-value payloads, decimal commas, CSV payloads, unknown types, and invalid
   values.
-- Adapter behavior for simulator, TCP line, Keyence SR-X barcode frames, serial factories, and
-  SMB1 polling.
-- Companion outbox persistence and retry.
+- Adapter behavior for simulator, TCP line, Keyence SR-X barcode frames, serial request factories,
+  and SMB1 polling.
+- Companion outbox persistence, retry, API-outage bootstrap safety, adapter configuration failure
+  safety, measurement-request polling outage safety, multi-adapter aggregation, and adapter
+  supervisor restart behavior.
+- Live event delivery around stale websocket clients.
 
 ## Simulators
 
@@ -34,7 +37,7 @@ This is the fastest way to make the operator UI show a scanned part and a captur
 
 ```bash
 slf-trace-sim api \
-  --server-url http://localhost:8000 \
+  --server-url http://localhost:8081 \
   --station-id 1 \
   --rueckmeldenummer RM-DEV-0001 \
   --measurement-type breite \

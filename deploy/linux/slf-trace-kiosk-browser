@@ -16,7 +16,7 @@ elif [[ -r /etc/slf-trace/panel.env ]]; then
 fi
 
 UI_HOST="${UI_HOST:-127.0.0.1}"
-UI_PORT="${UI_PORT:-5006}"
+UI_PORT="${UI_PORT:-8080}"
 STATION_ID="${STATION_ID:-1}"
 KIOSK_BASE_URL="${KIOSK_BASE_URL:-http://${UI_HOST}:${UI_PORT}}"
 KIOSK_URL="${KIOSK_URL:-${KIOSK_BASE_URL}/kiosk?station_id=${STATION_ID}}"

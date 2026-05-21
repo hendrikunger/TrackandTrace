@@ -194,7 +194,13 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
             if writer in self._client_writers:
                 self._client_writers.remove(writer)
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except (ConnectionError, OSError):
+                logger.debug(
+                    "Scanner client socket closed with transport error",
+                    extra={"adapter": self.name},
+                )
 
     async def _heartbeat_watchdog(self) -> None:
         while not self._stop_event.is_set():
@@ -302,7 +308,13 @@ class TcpBarcodeScannerAdapter(MeasurementAdapter):
         finally:
             if writer is not None:
                 writer.close()
-                await writer.wait_closed()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    logger.debug(
+                        "Scanner command socket closed with transport error",
+                        extra={"adapter": self.name, "command": command},
+                    )
         logger.info(
             "Sent scanner command %s to %s:%s",
             command,

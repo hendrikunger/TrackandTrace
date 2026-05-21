@@ -66,9 +66,9 @@ Use this connection for local, API VM, and station tests unless a task explicitl
 - Python environment: `/opt/slf-trace/env`
 - API service: `slf-trace-api.service`
 - UI service: `slf-trace-ui.service`
-- Public admin UI: `http://api.home.io:5006/app`
-- Public kiosk UI: `http://api.home.io:5006/kiosk`
-- API health: `http://api.home.io:8000/health`
+- Public admin UI: `http://api.home.io:8080/app`
+- Public kiosk UI: `http://api.home.io:8080/kiosk`
+- API health: `http://api.home.io:8081/health`
 
 Connect:
 
@@ -83,6 +83,20 @@ cd /opt/slf-trace/src/TrackandTrace
 echo apitest | sudo -S -p "" deploy/update-test-server.sh
 ```
 
+Use this for API, admin UI, and kiosk UI changes. Do not SSH to or restart the station for UI-only
+changes; the kiosk is served centrally from `api.home.io`.
+
+Important service boundary:
+
+- `deploy/update-test-server.sh` runs only on `api.home.io`.
+- It restarts only `slf-trace-api.service` and `slf-trace-ui.service` on the API VM.
+- It must never restart `slf-trace-companion.service`.
+- The script now refuses to run if `slf-trace-companion.service` is installed on the host, so it
+  cannot be used on a station by mistake.
+- Restarting the API or Panel UI can briefly disconnect the browser/WebSocket and can make admin
+  health look stale for a heartbeat interval. It should not send scanner `LOFF`, drop the Keyence
+  working mode, or restart the station companion.
+
 Check service state:
 
 ```bash
@@ -96,6 +110,7 @@ journalctl -u slf-trace-ui.service -n 100 --no-pager
 
 - Host/IP: `10.0.0.196`
 - SSH user: `u1`
+- SSH key: `~/.ssh/id_rsa`
 - Sudo password: `u1`
 - Repo checkout: `/opt/slf-trace/src/TrackandTrace`
 - Packaged/current environment: `/opt/slf-trace/current/env`
@@ -103,15 +118,17 @@ journalctl -u slf-trace-ui.service -n 100 --no-pager
 - Kiosk service: `slf-trace-kiosk.service`
 - Default assigned station: `BREITE-DEV-01`
 - Default station id in test database: `3`
-- Server URL: `http://api.home.io:8000`
+- Server URL: `http://api.home.io:8081`
 
 Connect:
 
 ```bash
-ssh u1@10.0.0.196
+ssh -i ~/.ssh/id_rsa u1@10.0.0.196
 ```
 
-Update the station from git and restart the companion/kiosk services:
+Update the station from git and restart the companion/kiosk services only when station-side code or
+service setup changed, for example scanner, measurement adapters, companion runtime, kiosk browser
+launcher, or systemd units. Do not run this for API, admin UI, or central kiosk UI changes.
 
 ```bash
 cd /opt/slf-trace/src/TrackandTrace
@@ -210,14 +227,14 @@ slf-trace-api
 
 Useful URLs:
 
-- `http://localhost:8000/health?database=false`
-- `http://localhost:8000/health`
-- `http://localhost:8000/docs`
+- `http://localhost:8081/health?database=false`
+- `http://localhost:8081/health`
+- `http://localhost:8081/docs`
 
 Equivalent explicit command:
 
 ```bash
-python -m uvicorn slf_trace.api.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn slf_trace.api.main:app --host 0.0.0.0 --port 8081 --reload
 ```
 
 ## Run the UI
@@ -230,11 +247,12 @@ slf-trace-ui
 
 The console script starts Panel with `panel serve --dev` by default, so the browser reloads when UI
 code or imported project modules change. The UI binds to `UI_HOST` and `UI_PORT`, which default to
-`127.0.0.1:5006`. Keep `UI_HOST=127.0.0.1` for local development so Panel opens a reachable browser
+`127.0.0.1:8080`. Keep `UI_HOST=127.0.0.1` for local development so Panel opens a reachable browser
 URL; use `0.0.0.0` only when you intentionally want to bind the UI on all interfaces. Set
-`UI_AUTORELOAD=false` in `.env` to disable Panel development reload behavior. The launcher also
-passes the matching `--allow-websocket-origin`, because Bokeh rejects websocket connections when the
-browser origin does not exactly match the allowed host and port.
+`UI_AUTORELOAD=false` in `.env` to disable Panel development reload behavior. Set
+`UI_WEBSOCKET_ORIGINS=api.home.io:8080` on exposed hosts when the bind host is `0.0.0.0`, because
+Bokeh rejects websocket connections when the browser origin does not exactly match an allowed host
+and port.
 
 The admin UI is available at `/app`. The production operator UI is available separately at
 `/kiosk`, and can be pinned to a station with `/kiosk?station_id=1`. The URL station id overrides
@@ -265,7 +283,7 @@ For station-specific tests, set these in `.env` first:
 
 ```env
 STATION_ID=1
-SERVER_URL=http://localhost:8000
+SERVER_URL=http://localhost:8081
 COMPANION_STATE_PATH=companion_state.sqlite3
 ```
 
@@ -314,10 +332,12 @@ The no-hardware test strategy and simulator commands live in `docs/test-strategy
 
 ## Smoke Test Calls
 
-Create a station with a single allowed measurement type:
+Create a station with a single SMB adapter measurement type. The enabled adapter `measurement_type`
+defines the effective companion/server allowlist; `measurement_type_codes` is included as the
+fallback/manual allowlist for API paths that do not derive assignments from adapters.
 
 ```bash
-curl -X POST http://localhost:8000/api/stations \
+curl -X POST http://localhost:8081/api/stations \
   -H "Content-Type: application/json" \
   -d '{
     "name": "BREITE-DEV-02",
@@ -345,26 +365,34 @@ curl -X POST http://localhost:8000/api/stations \
 Fetch companion station config:
 
 ```bash
-curl http://localhost:8000/api/companion/stations/1/config
+curl http://localhost:8081/api/companion/stations/1/config
 ```
 
 Send a heartbeat:
 
 ```bash
-curl -X POST http://localhost:8000/api/companion/heartbeats \
+curl -X POST http://localhost:8081/api/companion/heartbeats \
   -H "Content-Type: application/json" \
   -d '{
     "station_id": 1,
     "status": "online",
+    "hostname": "dev-host",
     "companion_version": "dev",
-    "adapter_status": {"simulator": "online"}
+    "adapter_status": {
+      "runtime": "online",
+      "workflow_type": "measurement_capture",
+      "outbox_pending": 0,
+      "adapters": {
+        "simulator": {"state": "online"}
+      }
+    }
   }'
 ```
 
 Submit a barcode scan:
 
 ```bash
-curl -X POST http://localhost:8000/api/companion/barcode-scans \
+curl -X POST http://localhost:8081/api/companion/barcode-scans \
   -H "Content-Type: application/json" \
   -d '{
     "station_id": 1,
@@ -382,7 +410,7 @@ want to restrict which peer can connect.
 Submit a raw payload:
 
 ```bash
-curl -X POST http://localhost:8000/api/companion/raw-payloads \
+curl -X POST http://localhost:8081/api/companion/raw-payloads \
   -H "Content-Type: application/json" \
   -d '{
     "station_id": 1,
@@ -394,7 +422,7 @@ curl -X POST http://localhost:8000/api/companion/raw-payloads \
 Submit a measurement:
 
 ```bash
-curl -X POST http://localhost:8000/api/companion/measurements \
+curl -X POST http://localhost:8081/api/companion/measurements \
   -H "Content-Type: application/json" \
   -d '{
     "station_id": 1,
@@ -425,7 +453,7 @@ import json
 from websockets.asyncio.client import connect
 
 async def main():
-    async with connect("ws://localhost:8000/api/live/events") as websocket:
+    async with connect("ws://localhost:8081/api/live/events") as websocket:
         print(json.dumps(json.loads(await websocket.recv()), indent=2))
 
 asyncio.run(main())

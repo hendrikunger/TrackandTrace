@@ -1,12 +1,27 @@
+from decimal import Decimal
+from types import SimpleNamespace
+
+import panel as pn
+
 from slf_trace.config import Settings
 from slf_trace.ui.branding import load_logo_svg
 from slf_trace.ui.main import (
+    SCANNER_PROTOCOL_OPTIONS,
     adapter_measurement_type_codes,
     kiosk_missing_progress_labels,
     kiosk_progress_message,
     kiosk_progress_value_text,
+    kiosk_station_config_hash,
     kiosk_workflow_title,
+    label_printing_measurements_html,
+    measurement_value_html,
+    measurement_value_text,
+    positive_poll_period_ms,
     resolve_kiosk_station_id,
+    set_select_value,
+    split_measurement_display_value,
+    station_has_printer_adapter,
+    ui_websocket_origins,
 )
 
 
@@ -16,6 +31,47 @@ def test_logo_svg_asset_is_available() -> None:
     assert "<svg" in svg
     assert "viewBox" in svg
     assert "circle" in svg
+
+
+def test_ui_websocket_origins_use_explicit_comma_separated_values() -> None:
+    settings = Settings(ui_host="0.0.0.0", ui_port=8080)
+
+    assert ui_websocket_origins(settings) == ["0.0.0.0:8080"]
+
+    settings = Settings(ui_websocket_origins="api.home.io:8080, 10.0.0.151:8080")
+
+    assert ui_websocket_origins(settings) == ["api.home.io:8080", "10.0.0.151:8080"]
+
+
+def test_kiosk_poll_settings_have_fast_defaults() -> None:
+    settings = Settings()
+
+    assert settings.kiosk_scanner_poll_ms == 250
+    assert settings.kiosk_measurement_poll_ms == 500
+    assert positive_poll_period_ms(0, default=250) == 250
+    assert positive_poll_period_ms(-1, default=500) == 500
+    assert positive_poll_period_ms(125, default=500) == 125
+
+
+def test_scanner_protocol_options_only_offer_supported_modes() -> None:
+    assert SCANNER_PROTOCOL_OPTIONS == {
+        "": "",
+        "Keyence SR-X TCP": "Keyence SR-X TCP",
+        "Disabled": "none",
+    }
+    assert "other" not in SCANNER_PROTOCOL_OPTIONS.values()
+
+
+def test_select_value_does_not_duplicate_dict_option_values() -> None:
+    widget = pn.widgets.Select(
+        options={"Measurement capture": "measurement_capture"},
+        value="measurement_capture",
+    )
+
+    set_select_value(widget, "measurement_capture")
+
+    assert widget.options == {"Measurement capture": "measurement_capture"}
+    assert widget.value == "measurement_capture"
 
 
 def test_kiosk_workflow_title_uses_station_measurement_config() -> None:
@@ -39,6 +95,161 @@ def test_adapter_measurement_type_codes_use_enabled_adapters_only() -> None:
             {"enabled": True, "measurement_type": " "},
         ]
     ) == ["breite"]
+
+
+def test_station_has_printer_adapter_uses_enabled_printer_types() -> None:
+    assert station_has_printer_adapter(
+        {"adapter_config": [{"type": "printer_stub", "enabled": True}]}
+    )
+    assert not station_has_printer_adapter(
+        {"adapter_config": [{"type": "printer_stub", "enabled": False}]}
+    )
+
+
+def test_kiosk_station_config_hash_ignores_runtime_health() -> None:
+    station = {
+        "id": 3,
+        "name": "BREITE-DEV-01",
+        "workflow_type": "measurement_capture",
+        "adapter_config": [{"type": "tcp_line", "enabled": True}],
+        "measurement_type_codes": ["breite"],
+        "measurement_type_details": [{"code": "breite", "label": "Breite", "unit": "mm"}],
+        "health_state": "online",
+        "last_heartbeat_at": "2026-05-08T10:00:00Z",
+    }
+
+    changed_health = {
+        **station,
+        "health_state": "degraded",
+        "last_heartbeat_at": "2026-05-08T10:00:10Z",
+    }
+    changed_config = {
+        **station,
+        "adapter_config": [{"type": "tcp_line", "enabled": False}],
+    }
+
+    assert kiosk_station_config_hash(station) == kiosk_station_config_hash(changed_health)
+    assert kiosk_station_config_hash(station) != kiosk_station_config_hash(changed_config)
+
+
+def test_measurement_value_text_labels_values_by_measurement_type() -> None:
+    measurement = SimpleNamespace(
+        values=[
+            SimpleNamespace(measurement_type="innenring", value=Decimal("45.0000"), unit="mm"),
+            SimpleNamespace(measurement_type="breite", value=Decimal("32.2000"), unit="mm"),
+        ]
+    )
+    station = {
+        "measurement_type_details": [
+            {"code": "breite", "label": "Breite"},
+            {"code": "innenring", "label": "Innenring"},
+        ]
+    }
+
+    assert measurement_value_text(measurement, station) == (
+        "Breite: 32,2000 mm, Innenring: 45,0000 mm"
+    )
+
+
+def test_measurement_value_html_renders_each_value_on_own_line() -> None:
+    measurement = SimpleNamespace(
+        values=[
+            SimpleNamespace(measurement_type="innenring", value=Decimal("45.0000"), unit="mm"),
+            SimpleNamespace(measurement_type="breite", value=Decimal("32.2000"), unit="mm"),
+        ]
+    )
+    station = {
+        "measurement_type_details": [
+            {"code": "breite", "label": "Breite"},
+            {"code": "innenring", "label": "Innenring"},
+        ]
+    }
+
+    html = measurement_value_html(measurement, station)
+
+    assert html.count("slf-kiosk-value-row") == 2
+    assert "Typ</span>" in html
+    assert "Wert</span>" in html
+    assert "Status</span>" in html
+    assert "Einheit" not in html
+    assert "slf-kiosk-value-comma" in html
+    assert "font-variant-numeric:tabular-nums" in html
+    assert "font-size:26px" in html
+    assert "font-size:38px" in html
+    assert ">Breite</span>" in html
+    assert ">32</span>" in html
+    assert ">2000</span>" in html
+    assert ">Innenring</span>" in html
+    assert ">45</span>" in html
+    assert ">0000</span>" in html
+    assert ">mm</span>" in html
+    assert ">✓</span>" in html
+
+
+def test_split_measurement_display_value_keeps_decimal_separator_in_own_column() -> None:
+    assert split_measurement_display_value("32,2000 mm") == ("32", ",", "2000", "mm")
+    assert split_measurement_display_value("45 mm") == ("45", ",", "0000", "mm")
+    assert split_measurement_display_value("44") == ("44", ",", "0000", "")
+
+
+def test_label_printing_measurements_html_renders_latest_values() -> None:
+    html = label_printing_measurements_html(
+        "3412",
+        [
+            {
+                "label": "Breite",
+                "value": Decimal("32.2"),
+                "unit": "mm",
+                "station": "BREITE-01",
+                "measured_at": "2026-05-08T10:00:00+00:00",
+            },
+            {
+                "label": "Fertig",
+                "value": Decimal("44"),
+                "unit": "mm",
+                "station": "FERTIG-01",
+                "measured_at": "2026-05-08T10:01:00+00:00",
+            },
+        ],
+    )
+
+    assert "Letzte Messwerte: 3412" in html
+    assert ">Breite</span>" in html
+    assert ">32</span>" in html
+    assert ">2000</span>" in html
+    assert ">Fertig</span>" in html
+    assert ">44</span>" in html
+    assert "BREITE-01" not in html
+    assert "FERTIG-01" not in html
+    assert "2026-05-08T10:00:00+00:00" not in html
+
+
+def test_label_printing_measurements_html_marks_configured_missing_values() -> None:
+    html = label_printing_measurements_html(
+        "3412",
+        [
+            {
+                "measurement_type": "innenring",
+                "label": "Innenring",
+                "value": Decimal("45"),
+                "unit": "mm",
+            }
+        ],
+        station={
+            "measurement_types": [
+                {"code": "breite", "label": "Breite", "unit": "mm", "active": True},
+                {"code": "innenring", "label": "Innenring", "unit": "mm", "active": True},
+            ]
+        },
+    )
+
+    assert ">Breite</span>" in html
+    assert ">--</span>" in html
+    assert ">----</span>" in html
+    assert ">✕</span>" in html
+    assert ">Innenring</span>" in html
+    assert ">45</span>" in html
+    assert ">✓</span>" in html
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
@@ -99,9 +310,13 @@ def test_kiosk_progress_helpers_format_received_values() -> None:
         ]
     }
 
-    assert kiosk_progress_value_text(progress["values"][0]) == "77,7 mm"
+    assert kiosk_progress_value_text(progress["values"][0]) == "77,7000 mm"
     assert kiosk_missing_progress_labels(progress, station) == ["Innenring"]
-    assert (
-        "Erledigt: Breite: 77,7 mm"
-        in kiosk_progress_message(progress, station, "Warte auf Innenring.")
-    )
+    message = kiosk_progress_message(progress, station, "Warte auf Innenring.")
+    assert "Erledigt:" in message
+    assert ">Breite</span>" in message
+    assert ">77</span>" in message
+    assert ">7000</span>" in message
+    assert ">Innenring</span>" in message
+    assert ">✕</span>" in message
+    assert "Warte auf Innenring." in message

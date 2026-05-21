@@ -19,6 +19,10 @@ from slf_trace.companion.adapters.simulator import (
     SimulatorAdapterConfig,
     SimulatorMeasurementAdapter,
 )
+from slf_trace.companion.adapters.smb import (
+    SmbPollingAdapterConfig,
+    SmbPollingMeasurementAdapter,
+)
 from slf_trace.companion.adapters.tcp import TcpLineAdapterConfig, TcpLineMeasurementAdapter
 from slf_trace.parsing import ParserConfig
 
@@ -190,6 +194,39 @@ def test_factory_builds_scanner_adapter_from_station_config() -> None:
     assert adapter.config.command_hold_seconds == 2.0
     assert adapter.config.startup_command_attempts == 3
     assert adapter.config.startup_command_retry_seconds == 5.0
+
+
+@pytest.mark.asyncio
+async def test_smb_adapter_keeps_running_when_read_raises_unexpected_exception() -> None:
+    adapter = SmbPollingMeasurementAdapter(
+        SmbPollingAdapterConfig(
+            server="truenas.home.io",
+            share="agents",
+            username="user",
+            password="password",
+            measurement_type="breite",
+            value_column_index=0,
+            poll_interval_seconds=0.01,
+        )
+    )
+
+    def read_once():
+        raise Exception("SMB read failed")
+
+    adapter.read_once = read_once
+    context = AdapterContext(
+        station_id=1,
+        emit=lambda event: None,
+        parser_config=ParserConfig(measurement_types={"breite"}),
+        measurement_needed=lambda: True,
+    )
+
+    task = asyncio.create_task(adapter.start(context))
+    await asyncio.sleep(0.03)
+    await adapter.stop()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert adapter.health().state is AdapterState.STOPPED
 
 
 @pytest.mark.asyncio

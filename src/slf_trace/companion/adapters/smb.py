@@ -149,6 +149,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
         )
         self._stop_event = asyncio.Event()
         self._status = AdapterStatus(name=self.name, state=AdapterState.STOPPED)
+        self._last_reported_error: str | None = None
 
     async def start(self, context: AdapterContext) -> None:
         self._stop_event.clear()
@@ -173,12 +174,15 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
                     message="Measurement emitted" if emitted else "No new SMB file",
                     last_event_at=datetime.now(UTC) if emitted else self._status.last_event_at,
                 )
-            except (OSError, RuntimeError, ValueError, IndexError) as exc:
+                self._last_reported_error = None
+            except Exception as exc:  # noqa: BLE001 - SMB libraries raise mixed exception types.
+                error_message = str(exc)
                 self._status = AdapterStatus(
                     name=self.name,
                     state=AdapterState.DEGRADED,
-                    last_error=str(exc),
+                    last_error=error_message,
                 )
+                await self.report_processing_error(context, exc, error_message)
 
             await self._sleep_until_poll()
 
@@ -190,6 +194,30 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
 
     def health(self) -> AdapterStatus:
         return self._status
+
+    async def report_processing_error(
+        self,
+        context: AdapterContext,
+        exc: Exception,
+        error_message: str,
+    ) -> None:
+        if context.emit_station_event is None or error_message == self._last_reported_error:
+            return
+        self._last_reported_error = error_message
+        await context.emit_station_event(
+            "adapter.smb_read_failed",
+            "error",
+            "SMB adapter could not process the measurement file.",
+            {
+                "adapter": self.name,
+                "error": exc.__class__.__name__,
+                "message": error_message,
+                "server": self.config.server,
+                "share": self.config.share,
+                "remote_dir": self.config.remote_dir,
+                "measurement_type": self.config.measurement_type,
+            },
+        )
 
     async def poll_once(self, context: AdapterContext) -> bool:
         if not _measurement_needed(context, self.config.measurement_type):
