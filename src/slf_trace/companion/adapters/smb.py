@@ -344,6 +344,7 @@ class SmbPollingMeasurementAdapter(MeasurementAdapter):
         if self.config.delete_with_smbclient:
             delete_remote_file_smbclient(
                 server=self.config.server,
+                server_name=self.config.server_name,
                 share=self.config.share,
                 username=self.config.username,
                 password=self.config.password,
@@ -382,22 +383,25 @@ def _measurement_needed(context: AdapterContext, measurement_type: str | None) -
 def delete_remote_file_smbclient(
     *,
     server: str,
+    server_name: str | None = None,
     share: str,
     username: str,
     password: str,
     remote_path: str,
     min_protocol: str = "NT1",
 ) -> None:
-    clean_path = remote_path.lstrip("/")
+    clean_path = remote_path.lstrip("/").replace("/", "\\")
     cmd = [
         "smbclient",
-        f"//{server}/{share}",
+        f"//{server_name or server}/{share}",
         "-U",
         f"{username}%{password}",
         f"--option=client min protocol={min_protocol}",
         "-c",
         f'del "{clean_path}"',
     ]
+    if server_name:
+        cmd[2:2] = ["-I", server]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
