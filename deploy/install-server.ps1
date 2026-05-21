@@ -14,6 +14,22 @@ $ReleaseEnv = Join-Path $ReleaseDir ".env"
 $PreviousEnv = Join-Path $CurrentDir ".env"
 $CreatedTemplateEnv = $false
 
+function Remove-CurrentPath {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $Item = Get-Item -LiteralPath $Path -Force
+    if (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        [System.IO.Directory]::Delete($Item.FullName, $false)
+        return
+    }
+
+    Remove-Item -LiteralPath $Item.FullName -Recurse -Force -Confirm:$false
+}
+
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "logs") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
@@ -49,9 +65,7 @@ else {
     Write-Host "Created $ReleaseEnv from template. Edit it before running migrations or starting services."
 }
 
-if (Test-Path $CurrentDir) {
-    Remove-Item -Force $CurrentDir
-}
+Remove-CurrentPath $CurrentDir
 New-Item -ItemType Junction -Path $CurrentDir -Target $ReleaseDir | Out-Null
 
 $Python = Join-Path $CurrentDir "env\python.exe"

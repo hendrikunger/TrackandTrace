@@ -77,8 +77,12 @@ Responsibilities:
   installer creates a template `.env` and skips migration; on updates it preserves the existing
   `.env` and runs migration automatically.
 - Register startup tasks for:
-  - `slf-trace-api`
-  - `slf-trace-ui` for the central admin and kiosk UI
+  - `SLF Track Trace API`
+  - `SLF Track Trace UI` for the central admin and kiosk UI
+
+The Windows server runs the central production UI by default on `UI_PORT`, normally port `8080`.
+Production stations do not run a local UI; they open the central server UI from the browser/kiosk
+session. Use `-SkipUi` only for exceptional API-only diagnostics.
 
 PostgreSQL is expected to be installed and managed separately as a Windows service. The `.env`
 database settings must point at that PostgreSQL instance.
@@ -458,12 +462,12 @@ real PostgreSQL values.
 7. Smoke check:
 
    ```powershell
-   Invoke-WebRequest http://localhost:8000/health?database=false
-   Invoke-WebRequest http://localhost:8000/health
+   Invoke-WebRequest http://localhost:8081/health?database=false
+   Invoke-WebRequest http://localhost:8081/health
    ```
 
    ```powershell
-   Invoke-WebRequest http://localhost:5006/app
+   Invoke-WebRequest http://localhost:8080/app
    ```
 
 ## Windows Rollback
@@ -488,15 +492,15 @@ downgrade procedure.
 Server:
 
 ```powershell
-Invoke-WebRequest http://localhost:8000/health?database=false
-Invoke-WebRequest http://localhost:8000/health
+Invoke-WebRequest http://localhost:8081/health?database=false
+Invoke-WebRequest http://localhost:8081/health
 ```
 
 Central UI:
 
 ```text
-http://<server-host>:5006/app
-http://<server-host>:5006/kiosk?station_id=1
+http://<server-host>:8080/app
+http://<server-host>:8080/kiosk?station_id=1
 ```
 
 Companion:
