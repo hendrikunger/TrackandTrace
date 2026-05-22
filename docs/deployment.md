@@ -139,6 +139,31 @@ Start-ScheduledTask "SLF Track Trace UI"
 The server UI task is the normal production path. Do not use `-SkipUi` unless this host is
 intentionally API-only for diagnostics.
 
+### Windows Runtime Files
+
+Windows installers create persistent runtime directories under the install root:
+
+```text
+C:\SLF\TrackTrace\logs
+C:\SLF\TrackTrace\state
+```
+
+The Scheduled Tasks run with `C:\SLF\TrackTrace\current` as their working directory, but release
+directories are versioned and should not be used for persistent runtime files. The Windows
+installers therefore normalize relative `COMPANION_LOG_PATH` and `COMPANION_STATE_PATH` values in
+`.env` to the install root. For example, `logs/slf-trace-companion.log` becomes
+`C:\SLF\TrackTrace\logs\slf-trace-companion.log`.
+
+Existing Windows installs created before this normalization should be corrected manually:
+
+```env
+COMPANION_STATE_PATH=C:\SLF\TrackTrace\state\companion_state.sqlite3
+COMPANION_LOG_PATH=C:\SLF\TrackTrace\logs\slf-trace-companion.log
+```
+
+Then restart the companion task on stations, or the API/UI tasks on the server if those settings
+were changed there.
+
 ## Windows 11 Station Install
 
 Use `deploy/install-panel.ps1` on Windows touch panel machines.
@@ -675,8 +700,9 @@ Companion:
 ## Data To Collect For Support
 
 - `.env` with secrets redacted.
-- `logs/slf-trace-companion.log*`
-- API logs from the Windows server task/service.
+- `C:\SLF\TrackTrace\logs\slf-trace-companion.log*` on Windows companions.
+- API/UI stdout is not currently captured to a file by the Windows Scheduled Tasks. Use Task
+  Scheduler history and foreground commands for server diagnostics until file logging is added.
 - `alembic current` output.
 - Admin station health screenshot.
 - Recent diagnostics from `/api/stations/{station_id}/events`.

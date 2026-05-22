@@ -13,6 +13,36 @@ $CurrentDir = Join-Path $InstallRoot "current"
 $ReleaseEnv = Join-Path $ReleaseDir ".env"
 $PreviousEnv = Join-Path $CurrentDir ".env"
 
+function Convert-EnvPathToInstallRoot {
+    param(
+        [string]$EnvPath,
+        [string]$Name,
+        [string]$InstallRoot
+    )
+
+    $Lines = Get-Content -LiteralPath $EnvPath
+    $Changed = $false
+    $Updated = foreach ($Line in $Lines) {
+        if ($Line -notmatch "^$([regex]::Escape($Name))=(.*)$") {
+            $Line
+            continue
+        }
+
+        $Value = $Matches[1].Trim()
+        if ($Value -eq "" -or [System.IO.Path]::IsPathRooted($Value)) {
+            $Line
+            continue
+        }
+
+        $Changed = $true
+        "$Name=$((Join-Path $InstallRoot $Value))"
+    }
+
+    if ($Changed) {
+        Set-Content -LiteralPath $EnvPath -Value $Updated -Encoding UTF8
+    }
+}
+
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "logs") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
@@ -40,8 +70,11 @@ elseif (Test-Path $PreviousEnv) {
 }
 else {
     Copy-Item (Join-Path $ReleaseDir "deploy\templates\panel.env.example") $ReleaseEnv
-    Write-Host "Created $ReleaseDir\.env. Edit SERVER_URL, DATABASE_*, and STATION_ID before starting."
+    Write-Host "Created $ReleaseDir\.env. Edit SERVER_URL, STATION_ID, and STATION_TOKEN before starting."
 }
+
+Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "COMPANION_STATE_PATH" -InstallRoot $InstallRoot
+Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "COMPANION_LOG_PATH" -InstallRoot $InstallRoot
 
 if (Test-Path $CurrentDir) {
     Remove-Item -Force $CurrentDir

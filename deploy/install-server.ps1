@@ -30,6 +30,36 @@ function Remove-CurrentPath {
     Remove-Item -LiteralPath $Item.FullName -Recurse -Force -Confirm:$false
 }
 
+function Convert-EnvPathToInstallRoot {
+    param(
+        [string]$EnvPath,
+        [string]$Name,
+        [string]$InstallRoot
+    )
+
+    $Lines = Get-Content -LiteralPath $EnvPath
+    $Changed = $false
+    $Updated = foreach ($Line in $Lines) {
+        if ($Line -notmatch "^$([regex]::Escape($Name))=(.*)$") {
+            $Line
+            continue
+        }
+
+        $Value = $Matches[1].Trim()
+        if ($Value -eq "" -or [System.IO.Path]::IsPathRooted($Value)) {
+            $Line
+            continue
+        }
+
+        $Changed = $true
+        "$Name=$((Join-Path $InstallRoot $Value))"
+    }
+
+    if ($Changed) {
+        Set-Content -LiteralPath $EnvPath -Value $Updated -Encoding UTF8
+    }
+}
+
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "logs") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
@@ -64,6 +94,9 @@ else {
     $CreatedTemplateEnv = $true
     Write-Host "Created $ReleaseEnv from template. Edit it before running migrations or starting services."
 }
+
+Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "COMPANION_STATE_PATH" -InstallRoot $InstallRoot
+Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "COMPANION_LOG_PATH" -InstallRoot $InstallRoot
 
 Remove-CurrentPath $CurrentDir
 New-Item -ItemType Junction -Path $CurrentDir -Target $ReleaseDir | Out-Null

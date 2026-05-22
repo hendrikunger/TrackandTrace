@@ -88,6 +88,10 @@ Log rotation is controlled by:
 - `COMPANION_LOG_MAX_BYTES` (default `5000000`)
 - `COMPANION_LOG_BACKUP_COUNT` (default `5`)
 
+On Windows installations, use an absolute persistent path such as
+`C:\SLF\TrackTrace\logs\slf-trace-companion.log`. The Windows installers normalize relative
+`COMPANION_LOG_PATH` values to the install root so logs survive release updates.
+
 ## Outbox
 
 The outbox is a SQLite database at `COMPANION_STATE_PATH`. It stores:
