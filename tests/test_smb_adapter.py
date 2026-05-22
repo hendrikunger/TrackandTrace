@@ -301,7 +301,7 @@ def test_smbclient_delete_uses_configured_protocol(monkeypatch) -> None:
         "station%secret",
         "--option=client min protocol=SMB2",
         "-c",
-        'del "ExcelAusgabe/result_10.csv"',
+        'del "ExcelAusgabe\\result_10.csv"',
     ]
 
 
