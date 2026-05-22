@@ -465,6 +465,18 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         width=adapter_field_width,
     )
     adapter_server = pn.widgets.TextInput(name="SMB server", width=adapter_field_width)
+    adapter_smb_port = pn.widgets.IntInput(
+        name="SMB port",
+        start=1,
+        end=65535,
+        value=445,
+        width=adapter_field_width,
+    )
+    adapter_server_name = pn.widgets.TextInput(
+        name="SMB server name",
+        placeholder="Optional NetBIOS name",
+        width=adapter_field_width,
+    )
     adapter_share = pn.widgets.TextInput(name="Share", width=adapter_field_width)
     adapter_remote_dir = pn.widgets.TextInput(
         name="Remote directory",
@@ -1093,7 +1105,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         clear_station_form()
         set_message(station_message, "New station cancelled.")
 
-    def create_station_from_form() -> None:
+    def create_station_from_form(_: object | None = None) -> None:
         nonlocal creating_station, selected_station_id
         try:
             values = current_station_config_values()
@@ -1151,6 +1163,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             adapter_type.value = "smb1_polling"
             adapter_name.value = "smb1-polling"
             adapter_server.value = ""
+            adapter_smb_port.value = 445
+            adapter_server_name.value = ""
             adapter_share.value = ""
             adapter_remote_dir.value = "/ExcelAusgabe"
             adapter_filename_pattern.value = r"_(\d+)\.csv$"
@@ -1187,6 +1201,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             adapter_type.value = str(config.get("type") or "smb1_polling")
             adapter_name.value = str(config.get("name") or "smb1-polling")
             adapter_server.value = str(config.get("server") or "")
+            adapter_smb_port.value = int(config.get("port", 445))
+            adapter_server_name.value = str(config.get("server_name") or "")
             adapter_share.value = str(config.get("share") or "")
             adapter_remote_dir.value = str(config.get("remote_dir") or "/ExcelAusgabe")
             adapter_filename_pattern.value = str(
@@ -1274,6 +1290,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "enabled": adapter_enabled.value,
             "name": adapter_name.value.strip() or "smb1-polling",
             "server": adapter_server.value.strip(),
+            "port": adapter_smb_port.value,
+            "server_name": adapter_server_name.value.strip(),
             "share": adapter_share.value.strip(),
             "username_env": adapter_username_env.value.strip(),
             "password_env": adapter_password_env.value.strip(),
@@ -1305,6 +1323,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             raise ValueError(f"Missing adapter fields: {', '.join(missing)}.")
         if values["value_column_index"] < 0:
             raise ValueError("Value column index must be 0 or greater.")
+        if values["port"] < 1 or values["port"] > 65535:
+            raise ValueError("SMB port must be between 1 and 65535.")
         if values["poll_interval_seconds"] <= 0:
             raise ValueError("Poll interval must be greater than 0.")
 
@@ -2168,6 +2188,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         adapter_type,
         adapter_name,
         adapter_server,
+        adapter_smb_port,
+        adapter_server_name,
         adapter_share,
         adapter_remote_dir,
         adapter_filename_pattern,
@@ -2284,6 +2306,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         pn.pane.Markdown("### SMB1 polling"),
         pn.GridBox(
             adapter_server,
+            adapter_smb_port,
+            adapter_server_name,
             adapter_share,
             adapter_remote_dir,
             adapter_username_env,
