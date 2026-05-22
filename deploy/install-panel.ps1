@@ -49,9 +49,17 @@ New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
 
 if (Test-Path (Join-Path $ReleaseSource "env.zip")) {
     Expand-Archive -Force (Join-Path $ReleaseSource "env.zip") (Join-Path $ReleaseDir "env")
+    $CondaUnpack = Join-Path $ReleaseDir "env\Scripts\conda-unpack.exe"
+    if (Test-Path $CondaUnpack) {
+        & $CondaUnpack
+    }
 }
 elseif (Test-Path (Join-Path $ReleaseSource "env")) {
     Copy-Item -Recurse -Force (Join-Path $ReleaseSource "env") (Join-Path $ReleaseDir "env")
+    $CondaUnpack = Join-Path $ReleaseDir "env\Scripts\conda-unpack.exe"
+    if (Test-Path $CondaUnpack) {
+        & $CondaUnpack
+    }
 }
 else {
     throw "Release source must contain env.zip or env directory."
