@@ -21,7 +21,6 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from slf_trace.api.services.admin import current_station_event, is_station_online, station_health
-from slf_trace.companion.laser import LaserMeasurementValue, format_laser_measurement_file
 from slf_trace.companion.runtime import normalize_workflow_type
 from slf_trace.config import Settings, get_settings
 from slf_trace.models import (
@@ -411,12 +410,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         sizing_mode="stretch_width",
     )
     laser_output_heading = pn.pane.Markdown("### Laser output", visible=False)
-    laser_measurement_order = pn.widgets.TextInput(
-        name="Measurement line order",
-        placeholder="measurement_1, measurement_2, measurement_3",
-        width=420,
-        visible=False,
-    )
     laser_output_mode = pn.widgets.Select(
         name="Laser output target",
         options={
@@ -1156,7 +1149,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         is_smb = laser_output_mode.value == "smb"
         laser_output_heading.visible = is_laser
         for widget in (
-            laser_measurement_order,
             laser_output_mode,
             laser_filename_template,
             laser_output_encoding,
@@ -1174,10 +1166,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             widget.visible = is_laser and is_smb
 
     def load_laser_workflow_fields(config: dict[str, Any]) -> None:
-        order = config.get("measurement_type_order")
-        laser_measurement_order.value = (
-            ", ".join(str(code) for code in order) if isinstance(order, list) else ""
-        )
         output = config.get("laser_output") if isinstance(config.get("laser_output"), dict) else {}
         smb = output.get("smb") if isinstance(output.get("smb"), dict) else None
         laser_output_mode.value = "smb" if smb is not None else "path"
@@ -1209,15 +1197,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def build_laser_workflow_config(existing: dict[str, Any]) -> dict[str, Any]:
         config = dict(existing)
-        order = [
-            code.strip()
-            for code in laser_measurement_order.value.split(",")
-            if code.strip()
-        ]
-        if order:
-            config["measurement_type_order"] = order
-        else:
-            config.pop("measurement_type_order", None)
+        config.pop("measurement_type_order", None)
 
         output: dict[str, Any] = {
             "filename_template": laser_filename_template.value.strip()
@@ -2053,9 +2033,19 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     session,
                     rueckmeldenummer_value,
                 )
+                if kiosk_latest_label_rows:
+                    create_measurement_request(
+                        session,
+                        station_id=int(station["id"]),
+                        rueckmeldenummer=rueckmeldenummer_value,
+                    )
         except Exception as exc:  # noqa: BLE001
             kiosk_latest_label_rows = []
-            set_message(kiosk_message, f"Messwerte konnten nicht geladen werden: {exc}", "danger")
+            set_message(
+                kiosk_message,
+                f"Messwerte konnten nicht geladen oder geschrieben werden: {exc}",
+                "danger",
+            )
             return
 
         kiosk_print_button.visible = False
@@ -2402,7 +2392,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         field_widget.param.watch(autosave_config, "value")
     workflow_type.param.watch(sync_laser_workflow_config, "value")
     for field_widget in (
-        laser_measurement_order,
         laser_output_mode,
         laser_output_path,
         laser_filename_template,
@@ -2513,7 +2502,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                     ),
                     laser_output_heading,
                     pn.GridBox(
-                        laser_measurement_order,
                         laser_output_mode,
                         laser_output_path,
                         laser_filename_template,
@@ -3341,25 +3329,11 @@ def laser_marking_measurements_html(
         )
         for row in ordered_rows
     ]
-    file_content = format_laser_measurement_file(
-        [
-            LaserMeasurementValue(
-                measurement_type=str(row["measurement_type"]),
-                value=str(row["value"]),
-            )
-            for row in ordered_rows
-        ]
-    )
     return (
         "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
         f"Laser-Datei: {escape(rueckmeldenummer)}"
         "</div>"
         f"{measurement_values_html(value_lines)}"
-        "<div style='font-size:20px;line-height:1.3;margin-top:14px;font-weight:800'>"
-        "TXT-Vorschau</div>"
-        "<pre style='margin:8px 0 0;padding:14px 18px;background:#111827;color:#f9fafb;"
-        "font-size:20px;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere'>"
-        f"{escape(file_content)}</pre>"
     )
 
 
@@ -3367,27 +3341,7 @@ def laser_marking_ordered_rows(
     rows: list[dict[str, Any]],
     station: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    latest_by_code = {
-        str(row["measurement_type"]): row for row in rows if row.get("measurement_type")
-    }
-    workflow_config = (station or {}).get("workflow_config") or {}
-    configured_order = workflow_config.get("measurement_type_order")
-    ordered_codes: list[str] = []
-    if isinstance(configured_order, list):
-        ordered_codes.extend(
-            str(code).strip()
-            for code in configured_order
-            if str(code).strip() in latest_by_code
-        )
-    if not ordered_codes:
-        ordered_codes.extend(
-            str(measurement_type["code"])
-            for measurement_type in (station or {}).get("measurement_types", [])
-            if measurement_type.get("active") and measurement_type.get("code") in latest_by_code
-        )
-
-    remaining_codes = sorted(set(latest_by_code) - set(ordered_codes))
-    return [latest_by_code[code] for code in [*ordered_codes, *remaining_codes]]
+    return sorted(rows, key=lambda row: str(row.get("measurement_type") or ""))
 
 
 def load_kiosk_measurement_progress(

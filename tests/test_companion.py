@@ -870,6 +870,36 @@ async def test_runtime_writes_laser_output_file_after_scan(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_writes_laser_output_file_after_manual_request(tmp_path) -> None:
+    output_dir = tmp_path / "laser"
+    client = FakeClient(
+        part_measurement_values={
+            "part_id": 17,
+            "rueckmeldenummer": "RM-LASER",
+            "values": [
+                {"measurement_type": "measurement_1", "value": "value_1"},
+                {"measurement_type": "measurement_2", "value": "value_2"},
+            ],
+        }
+    )
+    client.measurement_requests.append({"request_id": 23, "rueckmeldenummer": "RM-LASER"})
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "workflow_type": "laser_marking",
+        "workflow_config": {"laser_output": {"path": str(output_dir)}},
+    }
+
+    assert await runtime.fetch_laser_output_request_once()
+
+    assert runtime.last_measurement_request_id == 23
+    assert runtime.pending_measurement_request is None
+    assert client.part_measurement_value_requests == [(1, "RM-LASER")]
+    assert (output_dir / "RM-LASER.txt").read_text(encoding="utf-8") == (
+        "measurement_1\nvalue_1\nmeasurement_2\nvalue_2\n"
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_syncs_measurement_request_cursor_without_accepting_old_requests(
     tmp_path,
 ) -> None:

@@ -356,7 +356,7 @@ async def get_part_measurement_values(
     station_id: int,
     rueckmeldenummer: str,
 ) -> PartMeasurementValuesResponse:
-    station = await get_station_or_404(session, station_id)
+    await get_station_or_404(session, station_id)
     result = await session.execute(
         select(Part).where(Part.rueckmeldenummer == rueckmeldenummer)
     )
@@ -381,7 +381,7 @@ async def get_part_measurement_values(
     for value in result.scalars():
         latest_by_type.setdefault(value.measurement_type, value)
 
-    ordered_types = measurement_value_output_order(station, latest_by_type)
+    ordered_types = sorted(latest_by_type)
     return PartMeasurementValuesResponse(
         part_id=part.id,
         rueckmeldenummer=part.rueckmeldenummer,
@@ -395,24 +395,6 @@ async def get_part_measurement_values(
             for measurement_type in ordered_types
         ],
     )
-
-
-def measurement_value_output_order(
-    station: Station,
-    latest_by_type: dict[str, MeasurementValue],
-) -> list[str]:
-    configured_order = (station.workflow_config or {}).get("measurement_type_order")
-    ordered_types: list[str] = []
-    if isinstance(configured_order, list):
-        ordered_types = [
-            str(measurement_type).strip()
-            for measurement_type in configured_order
-            if str(measurement_type).strip() in latest_by_type
-        ]
-
-    remaining_types = sorted(set(latest_by_type) - set(ordered_types))
-    return [*ordered_types, *remaining_types]
-
 
 async def validate_measurement_types(
     session: AsyncSession,

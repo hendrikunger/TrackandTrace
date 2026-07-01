@@ -99,14 +99,12 @@ measurement types just to make the station appear in the kiosk.
 
 Laser marking stations can use the Keyence scanner fields to trigger file creation from an existing
 part. The companion loads the latest stored value per measurement type for the scanned
-`rueckmeldenummer` and writes alternating type/value lines. Configure the line order explicitly
-when the laser expects fixed positions:
+`rueckmeldenummer` and writes alternating type/value lines in stable measurement type code order:
 
 ```json
 {
   "workflow_type": "laser_marking",
   "workflow_config": {
-    "measurement_type_order": ["measurement_1", "measurement_2", "measurement_3"],
     "laser_output": {
       "path": "/mnt/laser-share",
       "filename_template": "{rueckmeldenummer}.txt",

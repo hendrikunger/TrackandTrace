@@ -276,7 +276,7 @@ def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
     )
 
 
-def test_laser_marking_measurements_html_shows_txt_preview_in_configured_order() -> None:
+def test_laser_marking_measurements_html_shows_table_in_code_order() -> None:
     html = laser_marking_measurements_html(
         "01",
         [
@@ -293,15 +293,11 @@ def test_laser_marking_measurements_html_shows_txt_preview_in_configured_order()
                 "unit": "",
             },
         ],
-        station={
-            "workflow_config": {
-                "measurement_type_order": ["measurement_1", "measurement_2"],
-            }
-        },
+        station={"workflow_config": {}},
     )
 
-    assert "TXT-Vorschau" in html
-    assert "measurement_1\n1.0000\nmeasurement_2\n2.0000" in html
+    assert "TXT-Vorschau" not in html
+    assert html.index(">Measurement 1</span>") < html.index(">Measurement 2</span>")
 
 
 def test_kiosk_station_id_uses_url_before_environment() -> None:

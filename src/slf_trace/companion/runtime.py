@@ -501,7 +501,7 @@ class CompanionRuntime:
             self.adapters = [*measurement_adapters]
             if self.active_scanner_adapter is not None:
                 self.adapters.append(self.active_scanner_adapter)
-            if self.is_measurement_capture_workflow():
+            if self.is_measurement_capture_workflow() or self.is_laser_marking_workflow():
                 await self.sync_measurement_request_cursor()
             try:
                 await self.send_heartbeat(status="starting" if adapters_ready else "degraded")
@@ -517,6 +517,8 @@ class CompanionRuntime:
             runtime_tasks = [asyncio.create_task(self.run_adapters(measurement_adapters))]
             if self.is_measurement_capture_workflow():
                 runtime_tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
+            if self.is_laser_marking_workflow():
+                runtime_tasks.append(asyncio.create_task(self.run_laser_output_request_loop()))
             reload_task = asyncio.create_task(self.config_reload_event.wait())
 
             try:
@@ -763,6 +765,20 @@ class CompanionRuntime:
                 )
             await asyncio.sleep(0.5)
 
+    async def run_laser_output_request_loop(self) -> None:
+        while True:
+            try:
+                await self.fetch_laser_output_request_once()
+            except Exception as exc:  # noqa: BLE001 - polling loop is a process safety boundary.
+                logger.exception(
+                    "Laser output request loop failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+            await asyncio.sleep(0.5)
+
     async def sync_measurement_request_cursor(self, *, max_requests: int = 1000) -> None:
         for _ in range(max_requests):
             try:
@@ -828,6 +844,47 @@ class CompanionRuntime:
         self.latest_rueckmeldenummer = rueckmeldenummer
         logger.info(
             "Accepted measurement request",
+            extra={
+                "station_id": self.config.station_id,
+                "request_id": self.last_measurement_request_id,
+            },
+        )
+        return True
+
+    async def fetch_laser_output_request_once(self) -> bool:
+        try:
+            request = await self.client.fetch_measurement_request(
+                self.config.station_id,
+                self.last_measurement_request_id,
+            )
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Laser output request poll failed; companion will keep running",
+                extra={
+                    "station_id": self.config.station_id,
+                    "request_id": self.last_measurement_request_id,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            return False
+        request_id = request.get("request_id")
+        if request_id is None:
+            return False
+
+        self.last_measurement_request_id = int(request_id)
+        rueckmeldenummer = str(request.get("rueckmeldenummer") or "").strip()
+        if not rueckmeldenummer:
+            return False
+
+        await self.handle_laser_marking_scan_event(
+            BarcodeScanEvent(
+                station_id=self.config.station_id,
+                source_type="manual_laser_request",
+                rueckmeldenummer=rueckmeldenummer,
+            )
+        )
+        logger.info(
+            "Accepted laser output request",
             extra={
                 "station_id": self.config.station_id,
                 "request_id": self.last_measurement_request_id,
@@ -915,6 +972,9 @@ class CompanionRuntime:
 
     def is_measurement_capture_workflow(self) -> bool:
         return self.workflow_type() == "measurement_capture"
+
+    def is_laser_marking_workflow(self) -> bool:
+        return self.workflow_type() == "laser_marking"
 
 
 def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeConfig:
