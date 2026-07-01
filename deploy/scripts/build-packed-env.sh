@@ -35,7 +35,6 @@ else
   exit 1
 fi
 
-python -m pip install --upgrade pip
 python -m pip install "dist/slf_trace-${VERSION}-py3-none-any.whl[smb,serial]"
 
 python - <<'PY'
