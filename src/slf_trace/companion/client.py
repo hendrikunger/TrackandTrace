@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -28,6 +29,18 @@ class CompanionClient:
         return await self._request(
             "GET",
             f"/api/companion/stations/{station_id}/measurement-request?after_id={after_id}",
+        )
+
+    async def fetch_part_measurement_values(
+        self,
+        station_id: int,
+        rueckmeldenummer: str,
+    ) -> dict[str, Any]:
+        encoded_rueckmeldenummer = quote(rueckmeldenummer, safe="")
+        return await self._request(
+            "GET",
+            f"/api/companion/stations/{station_id}/parts/"
+            f"{encoded_rueckmeldenummer}/measurement-values",
         )
 
     async def post_heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:

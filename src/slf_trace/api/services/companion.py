@@ -10,6 +10,8 @@ from slf_trace.api.schemas.companion import (
     BarcodeScanRequest,
     MeasurementRequest,
     ParsedMeasurementRequest,
+    PartMeasurementValueResponse,
+    PartMeasurementValuesResponse,
     RawPayloadRequest,
     StationEventRequest,
     StationHeartbeatRequest,
@@ -346,6 +348,70 @@ async def get_next_measurement_request(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_part_measurement_values(
+    session: AsyncSession,
+    *,
+    station_id: int,
+    rueckmeldenummer: str,
+) -> PartMeasurementValuesResponse:
+    station = await get_station_or_404(session, station_id)
+    result = await session.execute(
+        select(Part).where(Part.rueckmeldenummer == rueckmeldenummer)
+    )
+    part = result.scalar_one_or_none()
+    if part is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Part {rueckmeldenummer} was not found.",
+        )
+
+    result = await session.execute(
+        select(MeasurementValue)
+        .join(Measurement, Measurement.id == MeasurementValue.measurement_id)
+        .where(Measurement.part_id == part.id)
+        .order_by(
+            Measurement.measured_at.desc(),
+            Measurement.id.desc(),
+            MeasurementValue.id.desc(),
+        )
+    )
+    latest_by_type: dict[str, MeasurementValue] = {}
+    for value in result.scalars():
+        latest_by_type.setdefault(value.measurement_type, value)
+
+    ordered_types = measurement_value_output_order(station, latest_by_type)
+    return PartMeasurementValuesResponse(
+        part_id=part.id,
+        rueckmeldenummer=part.rueckmeldenummer,
+        values=[
+            PartMeasurementValueResponse(
+                measurement_type=measurement_type,
+                value=latest_by_type[measurement_type].value,
+                unit=latest_by_type[measurement_type].unit,
+                result_status=latest_by_type[measurement_type].result_status,
+            )
+            for measurement_type in ordered_types
+        ],
+    )
+
+
+def measurement_value_output_order(
+    station: Station,
+    latest_by_type: dict[str, MeasurementValue],
+) -> list[str]:
+    configured_order = (station.workflow_config or {}).get("measurement_type_order")
+    ordered_types: list[str] = []
+    if isinstance(configured_order, list):
+        ordered_types = [
+            str(measurement_type).strip()
+            for measurement_type in configured_order
+            if str(measurement_type).strip() in latest_by_type
+        ]
+
+    remaining_types = sorted(set(latest_by_type) - set(ordered_types))
+    return [*ordered_types, *remaining_types]
 
 
 async def validate_measurement_types(

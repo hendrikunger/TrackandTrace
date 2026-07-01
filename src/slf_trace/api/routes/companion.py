@@ -12,6 +12,7 @@ from slf_trace.api.schemas.companion import (
     MeasurementResponse,
     MeasurementTypeConfig,
     ParsedMeasurementRequest,
+    PartMeasurementValuesResponse,
     RawPayloadRequest,
     RawPayloadResponse,
     StationConfigResponse,
@@ -22,6 +23,7 @@ from slf_trace.api.schemas.companion import (
 )
 from slf_trace.api.services.companion import (
     get_next_measurement_request,
+    get_part_measurement_values,
     get_station_measurement_types,
     get_station_or_404,
     parse_and_record_measurement,
@@ -127,6 +129,30 @@ async def get_measurement_request(
     return MeasurementRequestCommandResponse(
         request_id=request.id,
         rueckmeldenummer=request.content.strip(),
+    )
+
+
+@router.get(
+    "/stations/{station_id}/parts/{rueckmeldenummer}/measurement-values",
+    response_model=PartMeasurementValuesResponse,
+)
+async def get_companion_part_measurement_values(
+    station_id: int,
+    rueckmeldenummer: str,
+    session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
+) -> PartMeasurementValuesResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
+    return await get_part_measurement_values(
+        session,
+        station_id=station_id,
+        rueckmeldenummer=rueckmeldenummer,
     )
 
 

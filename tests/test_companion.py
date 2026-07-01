@@ -41,6 +41,7 @@ class FakeClient:
         fail_measurement_request: bool = False,
         fail_heartbeat: bool = False,
         station_config: dict | None = None,
+        part_measurement_values: dict | None = None,
     ) -> None:
         self.fail_first_event = fail_first_event
         self.fail_barcode_scan = fail_barcode_scan
@@ -52,6 +53,12 @@ class FakeClient:
         self.heartbeats = []
         self.events = []
         self.barcode_scans = []
+        self.part_measurement_value_requests = []
+        self.part_measurement_values = part_measurement_values or {
+            "part_id": 1,
+            "rueckmeldenummer": "RM-SCAN",
+            "values": [],
+        }
         self.station_config = station_config or {
             "station_id": 1,
             "name": "Station 1",
@@ -75,6 +82,10 @@ class FakeClient:
             if request["request_id"] > after_id:
                 return request
         return {"request_id": None, "rueckmeldenummer": None}
+
+    async def fetch_part_measurement_values(self, station_id: int, rueckmeldenummer: str):
+        self.part_measurement_value_requests.append((station_id, rueckmeldenummer))
+        return {**self.part_measurement_values, "rueckmeldenummer": rueckmeldenummer}
 
     async def post_heartbeat(self, payload):
         if self.fail_heartbeat:
@@ -369,9 +380,27 @@ def test_runtime_skips_measurement_adapters_for_non_measurement_workflow(
 
     runtime.configure_adapters_from_station_config()
 
-    assert runtime.adapters == []
+    assert len(runtime.adapters) == 1
+    assert runtime.adapters[0].name == "keyence-srx-scanner"
     assert not runtime.is_measurement_capture_workflow()
     assert runtime.build_heartbeat_payload()["adapter_status"]["workflow_type"] == "laser_marking"
+
+
+def test_runtime_starts_scanner_for_laser_marking_workflow(tmp_path) -> None:
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=FakeClient())
+    runtime.station_config = {
+        "station_id": 1,
+        "name": "Laser 1",
+        "workflow_type": "laser_marking",
+        "scanner_host": "10.0.0.21",
+        "scanner_port": 9004,
+        "scanner_protocol": "Keyence SR-X TCP",
+    }
+
+    runtime.configure_adapters_from_station_config()
+
+    assert len(runtime.adapters) == 1
+    assert runtime.adapters[0].name == "keyence-srx-scanner"
 
 
 def test_runtime_starts_scanner_only_for_label_printing_workflow(tmp_path) -> None:
@@ -805,6 +834,39 @@ async def test_runtime_barcode_scan_queues_when_immediate_send_fails(tmp_path) -
     assert len(queued) == 1
     assert queued[0].endpoint == "/api/companion/barcode-scans"
     assert queued[0].payload["rueckmeldenummer"] == "RM-SCAN"
+
+
+@pytest.mark.asyncio
+async def test_runtime_writes_laser_output_file_after_scan(tmp_path) -> None:
+    output_dir = tmp_path / "laser"
+    client = FakeClient(
+        part_measurement_values={
+            "part_id": 17,
+            "rueckmeldenummer": "RM-LASER",
+            "values": [
+                {"measurement_type": "measurement_1", "value": "value_1"},
+                {"measurement_type": "measurement_2", "value": "value_2"},
+            ],
+        }
+    )
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "workflow_type": "laser_marking",
+        "workflow_config": {"laser_output": {"path": str(output_dir)}},
+    }
+
+    await runtime.handle_barcode_scan_event(
+        BarcodeScanEvent(
+            station_id=1,
+            source_type="keyence_srx",
+            rueckmeldenummer="RM-LASER",
+        )
+    )
+
+    assert client.part_measurement_value_requests == [(1, "RM-LASER")]
+    assert (output_dir / "RM-LASER.txt").read_text(encoding="utf-8") == (
+        "measurement_1\nvalue_1\nmeasurement_2\nvalue_2\n"
+    )
 
 
 @pytest.mark.asyncio

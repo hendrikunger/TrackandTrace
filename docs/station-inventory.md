@@ -96,3 +96,25 @@ database stores only a token hash.
 For non-measurement workflows such as `label_printing` or `laser_marking`, leave
 `measurement_type_codes` empty and store UI/process behavior in `workflow_config`. Do not add fake
 measurement types just to make the station appear in the kiosk.
+
+Laser marking stations can use the Keyence scanner fields to trigger file creation from an existing
+part. The companion loads the latest stored value per measurement type for the scanned
+`rueckmeldenummer` and writes alternating type/value lines. Configure the line order explicitly
+when the laser expects fixed positions:
+
+```json
+{
+  "workflow_type": "laser_marking",
+  "workflow_config": {
+    "measurement_type_order": ["measurement_1", "measurement_2", "measurement_3"],
+    "laser_output": {
+      "path": "/mnt/laser-share",
+      "filename_template": "{rueckmeldenummer}.txt",
+      "encoding": "utf-8"
+    }
+  }
+}
+```
+
+`laser_output.path` is for a locally mounted SMB share. Direct SMB writing is also supported with
+`laser_output.smb`, using `server`, `share`, `remote_dir`, `username_env`, and `password_env`.

@@ -35,6 +35,19 @@ class MeasurementRequestCommandResponse(BaseModel):
     rueckmeldenummer: str | None = None
 
 
+class PartMeasurementValueResponse(BaseModel):
+    measurement_type: str
+    value: Decimal
+    unit: str | None = None
+    result_status: str | None = None
+
+
+class PartMeasurementValuesResponse(BaseModel):
+    part_id: int
+    rueckmeldenummer: str
+    values: list[PartMeasurementValueResponse] = Field(default_factory=list)
+
+
 class StationHeartbeatRequest(BaseModel):
     station_id: int
     status: Literal["online", "degraded", "offline", "starting"] = "online"

@@ -21,6 +21,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from slf_trace.api.services.admin import current_station_event, is_station_online, station_health
+from slf_trace.companion.laser import LaserMeasurementValue, format_laser_measurement_file
 from slf_trace.companion.runtime import normalize_workflow_type
 from slf_trace.config import Settings, get_settings
 from slf_trace.models import (
@@ -408,6 +409,78 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         depth=4,
         height=160,
         sizing_mode="stretch_width",
+    )
+    laser_output_heading = pn.pane.Markdown("### Laser output", visible=False)
+    laser_measurement_order = pn.widgets.TextInput(
+        name="Measurement line order",
+        placeholder="measurement_1, measurement_2, measurement_3",
+        width=420,
+        visible=False,
+    )
+    laser_output_mode = pn.widgets.Select(
+        name="Laser output target",
+        options={
+            "Mounted SMB path": "path",
+            "Direct SMB connection": "smb",
+        },
+        value="path",
+        width=220,
+        visible=False,
+    )
+    laser_output_path = pn.widgets.TextInput(
+        name="Output directory",
+        placeholder="/mnt/laser-share",
+        width=420,
+        visible=False,
+    )
+    laser_filename_template = pn.widgets.TextInput(
+        name="Filename template",
+        value="{rueckmeldenummer}.txt",
+        width=260,
+        visible=False,
+    )
+    laser_output_encoding = pn.widgets.Select(
+        name="File encoding",
+        options=["utf-8", "cp1252", "latin-1"],
+        value="utf-8",
+        width=160,
+        visible=False,
+    )
+    laser_smb_server = pn.widgets.TextInput(
+        name="SMB server",
+        width=260,
+        visible=False,
+    )
+    laser_smb_share = pn.widgets.TextInput(
+        name="SMB share",
+        width=220,
+        visible=False,
+    )
+    laser_smb_remote_dir = pn.widgets.TextInput(
+        name="SMB remote directory",
+        value="/",
+        width=260,
+        visible=False,
+    )
+    laser_smb_port = pn.widgets.IntInput(
+        name="SMB port",
+        start=1,
+        end=65535,
+        value=445,
+        width=140,
+        visible=False,
+    )
+    laser_smb_username_env = pn.widgets.TextInput(
+        name="Username env",
+        value="SMB_USER",
+        width=220,
+        visible=False,
+    )
+    laser_smb_password_env = pn.widgets.TextInput(
+        name="Password env",
+        value="SMB_PASSWORD",
+        width=220,
+        visible=False,
     )
     active = pn.widgets.Checkbox(name="Active", value=True)
     station_token_status = pn.pane.Markdown("Companion token: `not configured`")
@@ -959,6 +1032,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             workflow_title.value = station["workflow_title"] or ""
             workflow_config_value = dict(station.get("workflow_config") or {})
             workflow_config_preview.object = workflow_config_value
+            load_laser_workflow_fields(workflow_config_value)
+            update_laser_workflow_visibility()
             active.value = station["active"]
             load_adapter_configs(station.get("adapter_config") or [])
         finally:
@@ -1001,6 +1076,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             workflow_title.value = ""
             workflow_config_value = {}
             workflow_config_preview.object = workflow_config_value
+            load_laser_workflow_fields(workflow_config_value)
+            update_laser_workflow_visibility()
             active.value = True
             load_adapter_configs([])
         finally:
@@ -1073,6 +1150,93 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "workflow_config": dict(workflow_config_value),
             "active": active.value,
         }
+
+    def update_laser_workflow_visibility(_: object | None = None) -> None:
+        is_laser = normalize_workflow_type(str(workflow_type.value)) == "laser_marking"
+        is_smb = laser_output_mode.value == "smb"
+        laser_output_heading.visible = is_laser
+        for widget in (
+            laser_measurement_order,
+            laser_output_mode,
+            laser_filename_template,
+            laser_output_encoding,
+        ):
+            widget.visible = is_laser
+        laser_output_path.visible = is_laser and not is_smb
+        for widget in (
+            laser_smb_server,
+            laser_smb_share,
+            laser_smb_remote_dir,
+            laser_smb_port,
+            laser_smb_username_env,
+            laser_smb_password_env,
+        ):
+            widget.visible = is_laser and is_smb
+
+    def load_laser_workflow_fields(config: dict[str, Any]) -> None:
+        order = config.get("measurement_type_order")
+        laser_measurement_order.value = (
+            ", ".join(str(code) for code in order) if isinstance(order, list) else ""
+        )
+        output = config.get("laser_output") if isinstance(config.get("laser_output"), dict) else {}
+        smb = output.get("smb") if isinstance(output.get("smb"), dict) else None
+        laser_output_mode.value = "smb" if smb is not None else "path"
+        laser_output_path.value = str(output.get("path") or output.get("output_dir") or "")
+        laser_filename_template.value = str(
+            output.get("filename_template") or "{rueckmeldenummer}.txt"
+        )
+        laser_output_encoding.value = str(output.get("encoding") or "utf-8")
+        smb_config = smb or {}
+        laser_smb_server.value = str(smb_config.get("server") or "")
+        laser_smb_share.value = str(smb_config.get("share") or "")
+        laser_smb_remote_dir.value = str(smb_config.get("remote_dir") or "/")
+        laser_smb_port.value = int(smb_config.get("port") or 445)
+        laser_smb_username_env.value = str(smb_config.get("username_env") or "SMB_USER")
+        laser_smb_password_env.value = str(smb_config.get("password_env") or "SMB_PASSWORD")
+
+    def sync_laser_workflow_config(_: object | None = None) -> None:
+        nonlocal workflow_config_value
+        if loading_station_form:
+            return
+        update_laser_workflow_visibility()
+        if normalize_workflow_type(str(workflow_type.value)) != "laser_marking":
+            autosave_config()
+            return
+
+        workflow_config_value = build_laser_workflow_config(workflow_config_value)
+        workflow_config_preview.object = workflow_config_value
+        autosave_config()
+
+    def build_laser_workflow_config(existing: dict[str, Any]) -> dict[str, Any]:
+        config = dict(existing)
+        order = [
+            code.strip()
+            for code in laser_measurement_order.value.split(",")
+            if code.strip()
+        ]
+        if order:
+            config["measurement_type_order"] = order
+        else:
+            config.pop("measurement_type_order", None)
+
+        output: dict[str, Any] = {
+            "filename_template": laser_filename_template.value.strip()
+            or "{rueckmeldenummer}.txt",
+            "encoding": laser_output_encoding.value or "utf-8",
+        }
+        if laser_output_mode.value == "smb":
+            output["smb"] = {
+                "server": laser_smb_server.value.strip(),
+                "share": laser_smb_share.value.strip(),
+                "remote_dir": laser_smb_remote_dir.value.strip() or "/",
+                "port": laser_smb_port.value or 445,
+                "username_env": laser_smb_username_env.value.strip() or "SMB_USER",
+                "password_env": laser_smb_password_env.value.strip() or "SMB_PASSWORD",
+            }
+        else:
+            output["path"] = laser_output_path.value.strip()
+        config["laser_output"] = output
+        return config
 
     def start_new_station(_: object | None = None) -> None:
         nonlocal creating_station, selected_station_id
@@ -1640,6 +1804,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 "Bitte Rückmeldenummer scannen, um die letzten Messwerte anzuzeigen.",
                 "info",
             )
+        elif station["workflow_type"] == "laser_marking":
+            kiosk_barcode.visible = True
+            update_kiosk_status(step=1)
+            set_message(
+                kiosk_message,
+                "Bitte Rückmeldenummer scannen, um die Laser-Datei vorzubereiten.",
+                "info",
+            )
         else:
             kiosk_barcode.visible = False
             update_kiosk_status(step=1)
@@ -1720,6 +1892,9 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         station = station_row_by_id(kiosk_current_station_id)
         if station["workflow_type"] == "label_printing":
             show_label_printing_measurements(barcode, station)
+            return
+        if station["workflow_type"] == "laser_marking":
+            show_laser_marking_measurements(barcode, station)
             return
         if station["workflow_type"] != "measurement_capture":
             set_message(
@@ -1858,6 +2033,45 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_latest_label_rows = []
         kiosk_print_button.visible = False
         kiosk_print_button.disabled = True
+        kiosk_message.object = (
+            "<div style='font-size:28px;line-height:1.25;font-weight:800'>"
+            f"Keine Messwerte für {escape(rueckmeldenummer_value)} gefunden."
+            "</div>"
+        )
+        kiosk_message.alert_type = "warning"
+        kiosk_message.visible = True
+        update_kiosk_status(step=2)
+
+    def show_laser_marking_measurements(
+        rueckmeldenummer_value: str,
+        station: dict[str, Any],
+    ) -> None:
+        nonlocal kiosk_latest_label_rows
+        try:
+            with session_scope(settings) as session:
+                kiosk_latest_label_rows = load_latest_measurement_values_for_part(
+                    session,
+                    rueckmeldenummer_value,
+                )
+        except Exception as exc:  # noqa: BLE001
+            kiosk_latest_label_rows = []
+            set_message(kiosk_message, f"Messwerte konnten nicht geladen werden: {exc}", "danger")
+            return
+
+        kiosk_print_button.visible = False
+        kiosk_print_button.disabled = True
+        if kiosk_latest_label_rows:
+            kiosk_message.object = laser_marking_measurements_html(
+                rueckmeldenummer_value,
+                kiosk_latest_label_rows,
+                station=station,
+            )
+            kiosk_message.alert_type = "success"
+            kiosk_message.visible = True
+            update_kiosk_status(step=3)
+            return
+
+        kiosk_latest_label_rows = []
         kiosk_message.object = (
             "<div style='font-size:28px;line-height:1.25;font-weight:800'>"
             f"Keine Messwerte für {escape(rueckmeldenummer_value)} gefunden."
@@ -2011,7 +2225,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         if not kiosk or kiosk_current_station_id is None:
             return
         station = station_row_by_id(kiosk_current_station_id)
-        if station.get("workflow_type") not in {"measurement_capture", "label_printing"}:
+        if station.get("workflow_type") not in {
+            "measurement_capture",
+            "label_printing",
+            "laser_marking",
+        }:
             return
 
         try:
@@ -2108,6 +2326,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 ("2", "Messwerte"),
                 ("3", "Drucken"),
             ]
+        elif workflow == "laser_marking":
+            labels = [
+                ("1", "Barcode"),
+                ("2", "Messwerte"),
+                ("3", "Datei"),
+            ]
         else:
             labels = [
                 ("1", "Barcode"),
@@ -2176,6 +2400,21 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         active,
     ):
         field_widget.param.watch(autosave_config, "value")
+    workflow_type.param.watch(sync_laser_workflow_config, "value")
+    for field_widget in (
+        laser_measurement_order,
+        laser_output_mode,
+        laser_output_path,
+        laser_filename_template,
+        laser_output_encoding,
+        laser_smb_server,
+        laser_smb_share,
+        laser_smb_remote_dir,
+        laser_smb_port,
+        laser_smb_username_env,
+        laser_smb_password_env,
+    ):
+        field_widget.param.watch(sync_laser_workflow_config, "value")
     for field_widget in (
         measurement_type_code,
         measurement_type_label,
@@ -2270,6 +2509,26 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                         workflow_type,
                         workflow_title,
                         ncols=2,
+                        align="start",
+                    ),
+                    laser_output_heading,
+                    pn.GridBox(
+                        laser_measurement_order,
+                        laser_output_mode,
+                        laser_output_path,
+                        laser_filename_template,
+                        laser_output_encoding,
+                        ncols=2,
+                        align="start",
+                    ),
+                    pn.GridBox(
+                        laser_smb_server,
+                        laser_smb_share,
+                        laser_smb_remote_dir,
+                        laser_smb_port,
+                        laser_smb_username_env,
+                        laser_smb_password_env,
+                        ncols=3,
                         align="start",
                     ),
                     pn.Accordion(
@@ -3066,6 +3325,69 @@ def label_printing_value_lines(
             )
         )
     return value_lines
+
+
+def laser_marking_measurements_html(
+    rueckmeldenummer: str,
+    rows: list[dict[str, Any]],
+    *,
+    station: dict[str, Any] | None = None,
+) -> str:
+    ordered_rows = laser_marking_ordered_rows(rows, station)
+    value_lines = [
+        (
+            str(row.get("label") or row["measurement_type"]),
+            f"{str(row['value']).replace('.', ',')} {row.get('unit') or ''}".strip(),
+        )
+        for row in ordered_rows
+    ]
+    file_content = format_laser_measurement_file(
+        [
+            LaserMeasurementValue(
+                measurement_type=str(row["measurement_type"]),
+                value=str(row["value"]),
+            )
+            for row in ordered_rows
+        ]
+    )
+    return (
+        "<div style='font-size:28px;line-height:1.25;font-weight:800;margin-bottom:8px'>"
+        f"Laser-Datei: {escape(rueckmeldenummer)}"
+        "</div>"
+        f"{measurement_values_html(value_lines)}"
+        "<div style='font-size:20px;line-height:1.3;margin-top:14px;font-weight:800'>"
+        "TXT-Vorschau</div>"
+        "<pre style='margin:8px 0 0;padding:14px 18px;background:#111827;color:#f9fafb;"
+        "font-size:20px;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere'>"
+        f"{escape(file_content)}</pre>"
+    )
+
+
+def laser_marking_ordered_rows(
+    rows: list[dict[str, Any]],
+    station: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    latest_by_code = {
+        str(row["measurement_type"]): row for row in rows if row.get("measurement_type")
+    }
+    workflow_config = (station or {}).get("workflow_config") or {}
+    configured_order = workflow_config.get("measurement_type_order")
+    ordered_codes: list[str] = []
+    if isinstance(configured_order, list):
+        ordered_codes.extend(
+            str(code).strip()
+            for code in configured_order
+            if str(code).strip() in latest_by_code
+        )
+    if not ordered_codes:
+        ordered_codes.extend(
+            str(measurement_type["code"])
+            for measurement_type in (station or {}).get("measurement_types", [])
+            if measurement_type.get("active") and measurement_type.get("code") in latest_by_code
+        )
+
+    remaining_codes = sorted(set(latest_by_code) - set(ordered_codes))
+    return [latest_by_code[code] for code in [*ordered_codes, *remaining_codes]]
 
 
 def load_kiosk_measurement_progress(

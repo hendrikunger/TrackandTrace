@@ -25,6 +25,11 @@ from slf_trace.companion.adapters.factory import (
 )
 from slf_trace.companion.adapters.scanner import TcpBarcodeScannerAdapter
 from slf_trace.companion.client import CompanionClient
+from slf_trace.companion.laser import (
+    LaserMeasurementValue,
+    LaserOutputTarget,
+    write_laser_measurement_file,
+)
 from slf_trace.companion.outbox import Outbox, OutboxEvent
 from slf_trace.config import Settings, get_settings
 from slf_trace.parsing import ParserConfig
@@ -360,6 +365,86 @@ class CompanionRuntime:
 
     async def handle_barcode_scan_event(self, event: BarcodeScanEvent) -> None:
         await self.send_barcode_scan_event_now(event)
+        if self.workflow_type() == "laser_marking":
+            await self.handle_laser_marking_scan_event(event)
+
+    async def handle_laser_marking_scan_event(self, event: BarcodeScanEvent) -> None:
+        try:
+            response = await self.client.fetch_part_measurement_values(
+                self.config.station_id,
+                event.rueckmeldenummer,
+            )
+            values = [
+                LaserMeasurementValue(
+                    measurement_type=str(value["measurement_type"]),
+                    value=str(value["value"]),
+                )
+                for value in response.get("values", [])
+            ]
+            if not values:
+                self.enqueue_station_event(
+                    event_type="laser.output_empty",
+                    severity="warning",
+                    message="Laser station found no measurement values for scanned part.",
+                    context={"rueckmeldenummer": event.rueckmeldenummer},
+                )
+                return
+
+            target = LaserOutputTarget.from_workflow_config(self.workflow_config())
+            destination = await write_laser_measurement_file(
+                target,
+                rueckmeldenummer=str(response["rueckmeldenummer"]),
+                part_id=int(response["part_id"]),
+                values=values,
+            )
+            self.enqueue_station_event(
+                event_type="laser.output_written",
+                severity="info",
+                message="Laser station wrote measurement values for scanned part.",
+                context={
+                    "rueckmeldenummer": event.rueckmeldenummer,
+                    "destination": destination,
+                    "values_count": len(values),
+                },
+            )
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Laser measurement lookup failed",
+                extra={
+                    "station_id": self.config.station_id,
+                    "rueckmeldenummer": event.rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.enqueue_station_event(
+                event_type="laser.measurement_lookup_failed",
+                severity="error",
+                message="Laser station could not fetch measurement values for scanned part.",
+                context={
+                    "rueckmeldenummer": event.rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - file systems and SMB libraries raise mixed errors.
+            logger.exception(
+                "Laser output write failed",
+                extra={
+                    "station_id": self.config.station_id,
+                    "rueckmeldenummer": event.rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.enqueue_station_event(
+                event_type="laser.output_failed",
+                severity="error",
+                message="Laser station could not write the measurement value file.",
+                context={
+                    "rueckmeldenummer": event.rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
 
     async def flush_outbox_once(self, limit: int = 50) -> int:
         sent_count = 0
@@ -573,7 +658,7 @@ class CompanionRuntime:
         self.active_scanner_fingerprint = None
 
     def configured_scanner_adapter(self) -> MeasurementAdapter | None:
-        if self.workflow_type() not in {"measurement_capture", "label_printing"}:
+        if self.workflow_type() not in {"measurement_capture", "label_printing", "laser_marking"}:
             return None
         return build_scanner_adapter_from_station_config(self.station_config or {})
 
@@ -803,7 +888,7 @@ class CompanionRuntime:
                 },
             )
             self.adapters = []
-            if self.workflow_type() == "label_printing":
+            if self.workflow_type() in {"label_printing", "laser_marking"}:
                 scanner_adapter = build_scanner_adapter_from_station_config(
                     self.station_config or {}
                 )
@@ -823,6 +908,10 @@ class CompanionRuntime:
     def workflow_type(self) -> str:
         value = str((self.station_config or {}).get("workflow_type") or "measurement_capture")
         return normalize_workflow_type(value)
+
+    def workflow_config(self) -> dict[str, Any]:
+        config = (self.station_config or {}).get("workflow_config") or {}
+        return config if isinstance(config, dict) else {}
 
     def is_measurement_capture_workflow(self) -> bool:
         return self.workflow_type() == "measurement_capture"
