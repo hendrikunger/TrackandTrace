@@ -60,6 +60,18 @@ function Convert-EnvPathToInstallRoot {
     }
 }
 
+function Invoke-CheckedNative {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code $LASTEXITCODE`: $FilePath $($Arguments -join ' ')"
+    }
+}
+
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "logs") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
@@ -68,7 +80,7 @@ if (Test-Path (Join-Path $ReleaseSource "env.zip")) {
     Expand-Archive -Force (Join-Path $ReleaseSource "env.zip") (Join-Path $ReleaseDir "env")
     $CondaUnpack = Join-Path $ReleaseDir "env\Scripts\conda-unpack.exe"
     if (Test-Path $CondaUnpack) {
-        & $CondaUnpack
+        Invoke-CheckedNative -FilePath $CondaUnpack -Arguments @()
     }
 }
 elseif (Test-Path (Join-Path $ReleaseSource "env")) {
@@ -103,6 +115,10 @@ New-Item -ItemType Junction -Path $CurrentDir -Target $ReleaseDir | Out-Null
 
 $Python = Join-Path $CurrentDir "env\python.exe"
 $Alembic = Join-Path $CurrentDir "env\Scripts\alembic.exe"
+$ApiLog = Join-Path $InstallRoot "logs\slf-trace-api.log"
+$UiLog = Join-Path $InstallRoot "logs\slf-trace-ui.log"
+$ApiLauncher = Join-Path $CurrentDir "run-api-task.ps1"
+$UiLauncher = Join-Path $CurrentDir "run-ui-task.ps1"
 
 if ($CreatedTemplateEnv) {
     Write-Host "Skipped database migration because this first install created a template .env."
@@ -112,33 +128,55 @@ if ($CreatedTemplateEnv) {
 }
 else {
     Push-Location $CurrentDir
-    & $Alembic -c alembic.ini upgrade head
+    Invoke-CheckedNative -FilePath $Alembic -Arguments @("-c", "alembic.ini", "upgrade", "head")
     Pop-Location
 }
 
+$ApiLauncherContent = @"
+`$ErrorActionPreference = "Stop"
+Set-Location -LiteralPath `$PSScriptRoot
+& (Join-Path `$PSScriptRoot "env\python.exe") -c "from slf_trace.api.main import run; run()" *>> "$ApiLog"
+exit `$LASTEXITCODE
+"@
+Set-Content -LiteralPath $ApiLauncher -Value $ApiLauncherContent -Encoding UTF8
+
+$UiLauncherContent = @"
+`$ErrorActionPreference = "Stop"
+Set-Location -LiteralPath `$PSScriptRoot
+& (Join-Path `$PSScriptRoot "env\python.exe") -c "from slf_trace.ui.main import run; run()" *>> "$UiLog"
+exit `$LASTEXITCODE
+"@
+Set-Content -LiteralPath $UiLauncher -Value $UiLauncherContent -Encoding UTF8
+
 $ApiAction = New-ScheduledTaskAction `
-    -Execute $Python `
-    -Argument '-c "from slf_trace.api.main import run; run()"' `
+    -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ApiLauncher`"" `
     -WorkingDirectory $CurrentDir
 $ApiTrigger = New-ScheduledTaskTrigger -AtStartup
 $ApiPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+$TaskSettings = New-ScheduledTaskSettingsSet `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit (New-TimeSpan -Days 0)
 Register-ScheduledTask `
     -TaskName "SLF Track Trace API" `
     -Action $ApiAction `
     -Trigger $ApiTrigger `
     -Principal $ApiPrincipal `
+    -Settings $TaskSettings `
     -Force | Out-Null
 
 if (-not $SkipUi) {
     $UiAction = New-ScheduledTaskAction `
-        -Execute $Python `
-        -Argument '-c "from slf_trace.ui.main import run; run()"' `
+        -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UiLauncher`"" `
         -WorkingDirectory $CurrentDir
     Register-ScheduledTask `
         -TaskName "SLF Track Trace UI" `
         -Action $UiAction `
         -Trigger $ApiTrigger `
         -Principal $ApiPrincipal `
+        -Settings $TaskSettings `
         -Force | Out-Null
 }
 

@@ -100,14 +100,23 @@ service wrapper. The production server should have these tasks:
 The task actions are created by the installer and point at the current release junction:
 
 ```powershell
-C:\SLF\TrackTrace\current\env\python.exe `
-  -c "from slf_trace.api.main import run; run()"
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File "C:\SLF\TrackTrace\current\run-api-task.ps1"
 ```
 
 ```powershell
-C:\SLF\TrackTrace\current\env\python.exe `
-  -c "from slf_trace.ui.main import run; run()"
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File "C:\SLF\TrackTrace\current\run-ui-task.ps1"
 ```
+
+The launcher scripts append stdout and stderr to persistent logs:
+
+```text
+C:\SLF\TrackTrace\logs\slf-trace-api.log
+C:\SLF\TrackTrace\logs\slf-trace-ui.log
+```
+
+The tasks are registered with a short retry policy so a transient process crash is restarted.
 
 Useful operator commands:
 
@@ -701,8 +710,8 @@ Companion:
 
 - `.env` with secrets redacted.
 - `C:\SLF\TrackTrace\logs\slf-trace-companion.log*` on Windows companions.
-- API/UI stdout is not currently captured to a file by the Windows Scheduled Tasks. Use Task
-  Scheduler history and foreground commands for server diagnostics until file logging is added.
+- `C:\SLF\TrackTrace\logs\slf-trace-api.log` and
+  `C:\SLF\TrackTrace\logs\slf-trace-ui.log` on Windows servers.
 - `alembic current` output.
 - Admin station health screenshot.
 - Recent diagnostics from `/api/stations/{station_id}/events`.
