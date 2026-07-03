@@ -138,8 +138,24 @@ def _config_secret(config: dict[str, Any], value_key: str, env_key: str) -> str:
         return str(config[value_key])
     env_name = config.get(env_key)
     if env_name:
-        return os.environ[str(env_name)]
+        value = os.getenv(str(env_name)) or _dotenv_value(str(env_name))
+        if value:
+            return value
+        raise ValueError(f"Environment variable {env_name!r} is not set.")
     raise ValueError(f"SMB config requires {value_key} or {env_key}.")
+
+
+def _dotenv_value(name: str, path: str = ".env") -> str | None:
+    env_path = Path(path)
+    if not env_path.exists():
+        return None
+    prefix = f"{name}="
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or not stripped.startswith(prefix):
+            continue
+        return stripped[len(prefix) :].strip().strip('"').strip("'")
+    return None
 
 
 def _load_pysmb() -> tuple[Any, Any]:

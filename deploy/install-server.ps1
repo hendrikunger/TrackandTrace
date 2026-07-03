@@ -72,6 +72,18 @@ function Invoke-CheckedNative {
     }
 }
 
+function Remove-PlatformMetadata {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -File |
+        Where-Object { $_.Name -like "._*" -or $_.Name -eq ".DS_Store" } |
+        Remove-Item -Force
+}
+
 New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "logs") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $InstallRoot "state") | Out-Null
@@ -93,6 +105,7 @@ else {
 Copy-Item -Force (Join-Path $ReleaseSource "alembic.ini") $ReleaseDir
 Copy-Item -Recurse -Force (Join-Path $ReleaseSource "migrations") $ReleaseDir
 Copy-Item -Recurse -Force (Join-Path $ReleaseSource "deploy") $ReleaseDir
+Remove-PlatformMetadata -Path $ReleaseDir
 
 if (Test-Path $ReleaseEnv) {
     Write-Host "Preserved existing $ReleaseEnv."
@@ -133,20 +146,42 @@ else {
 }
 
 $ApiLauncherContent = @"
-`$ErrorActionPreference = "Stop"
-Set-Location -LiteralPath `$PSScriptRoot
-& (Join-Path `$PSScriptRoot "env\python.exe") -c "from slf_trace.api.main import run; run()" *>> "$ApiLog"
-exit `$LASTEXITCODE
+`$ErrorActionPreference = "Continue"
+try {
+    Set-Location -LiteralPath `$PSScriptRoot
+    `$env:APP_ENV = "production"
+    `$Python = Join-Path `$PSScriptRoot "env\python.exe"
+    `$Command = "echo [%DATE% %TIME%] Starting SLF Track Trace API task. >> `"$ApiLog`" && `"`$Python`" -c `"from slf_trace.api.main import run; run()`" >> `"$ApiLog`" 2>&1"
+    & cmd.exe /d /c `$Command
+    `$ExitCode = `$LASTEXITCODE
+    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace API task exited with code `$ExitCode. >> `"$ApiLog`""
+    exit `$ExitCode
+}
+catch {
+    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace API task failed. >> `"$ApiLog`""
+    throw
+}
 "@
-Set-Content -LiteralPath $ApiLauncher -Value $ApiLauncherContent -Encoding UTF8
+Set-Content -LiteralPath $ApiLauncher -Value $ApiLauncherContent -Encoding ASCII
 
 $UiLauncherContent = @"
-`$ErrorActionPreference = "Stop"
-Set-Location -LiteralPath `$PSScriptRoot
-& (Join-Path `$PSScriptRoot "env\python.exe") -c "from slf_trace.ui.main import run; run()" *>> "$UiLog"
-exit `$LASTEXITCODE
+`$ErrorActionPreference = "Continue"
+try {
+    Set-Location -LiteralPath `$PSScriptRoot
+    `$env:APP_ENV = "production"
+    `$Python = Join-Path `$PSScriptRoot "env\python.exe"
+    `$Command = "echo [%DATE% %TIME%] Starting SLF Track Trace UI task. >> `"$UiLog`" && `"`$Python`" -c `"from slf_trace.ui.main import run; run()`" >> `"$UiLog`" 2>&1"
+    & cmd.exe /d /c `$Command
+    `$ExitCode = `$LASTEXITCODE
+    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace UI task exited with code `$ExitCode. >> `"$UiLog`""
+    exit `$ExitCode
+}
+catch {
+    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace UI task failed. >> `"$UiLog`""
+    throw
+}
 "@
-Set-Content -LiteralPath $UiLauncher -Value $UiLauncherContent -Encoding UTF8
+Set-Content -LiteralPath $UiLauncher -Value $UiLauncherContent -Encoding ASCII
 
 $ApiAction = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
@@ -155,7 +190,7 @@ $ApiAction = New-ScheduledTaskAction `
 $ApiTrigger = New-ScheduledTaskTrigger -AtStartup
 $ApiPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
 $TaskSettings = New-ScheduledTaskSettingsSet `
-    -RestartCount 3 `
+    -RestartCount 10 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Days 0)
 Register-ScheduledTask `

@@ -91,6 +91,18 @@ function Invoke-InPackedEnv {
     & $RunnerExe @RunnerArgs @CommandArgs
 }
 
+function Remove-PlatformMetadata {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -File |
+        Where-Object { $_.Name -like "._*" -or $_.Name -eq ".DS_Store" } |
+        Remove-Item -Force
+}
+
 Invoke-InPackedEnv @("python", "-m", "pip", "install", "--upgrade", "pip", "build", "conda-pack")
 Invoke-InPackedEnv @("python", "-m", "build", "--wheel")
 Invoke-InPackedEnv @("python", "-m", "pip", "install", "$WheelPath[smb,serial]")
@@ -99,6 +111,7 @@ Invoke-InPackedEnv @("python", "-m", "conda_pack.cli", "-n", $EnvName, "-o", "$O
 
 Copy-Item alembic.ini "$OutDir/"
 Copy-Item -Recurse migrations "$OutDir/"
+Remove-PlatformMetadata -Path "$OutDir/migrations"
 New-Item -ItemType Directory -Force -Path "$OutDir/deploy", "$OutDir/docs" | Out-Null
 Copy-Item deploy/install-server.ps1 "$OutDir/deploy/"
 Copy-Item deploy/install-server.sh "$OutDir/deploy/"

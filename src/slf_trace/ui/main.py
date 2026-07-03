@@ -464,14 +464,16 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         visible=False,
     )
     laser_smb_username_env = pn.widgets.TextInput(
-        name="Username env",
+        name="Username env var",
         value="SMB_USER",
+        placeholder="Environment variable name, not the username",
         width=220,
         visible=False,
     )
     laser_smb_password_env = pn.widgets.TextInput(
-        name="Password env",
+        name="Password env var",
         value="SMB_PASSWORD",
+        placeholder="Environment variable name, not the password",
         width=220,
         visible=False,
     )
@@ -566,13 +568,15 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         width=adapter_field_width,
     )
     adapter_username_env = pn.widgets.TextInput(
-        name="Username env",
+        name="Username env var",
         value="SMB_USER",
+        placeholder="Environment variable name, not the username",
         width=adapter_field_width,
     )
     adapter_password_env = pn.widgets.TextInput(
-        name="Password env",
+        name="Password env var",
         value="SMB_PASSWORD",
+        placeholder="Environment variable name, not the password",
         width=adapter_field_width,
     )
     adapter_encoding = pn.widgets.Select(

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Any
 
 from slf_trace.companion.adapters.base import MeasurementAdapter
@@ -171,8 +172,21 @@ def _secret_value(config: dict[str, Any], key: str) -> str:
     if value is not None:
         return value
     if env_name is not None:
-        env_value = os.getenv(env_name)
+        env_value = os.getenv(env_name) or _dotenv_value(env_name)
         if env_value:
             return env_value
         raise ValueError(f"Environment variable {env_name!r} is not set.")
     raise ValueError(f"Missing required SMB adapter config value: {key} or {key}_env.")
+
+
+def _dotenv_value(name: str, path: str = ".env") -> str | None:
+    env_path = Path(path)
+    if not env_path.exists():
+        return None
+    prefix = f"{name}="
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or not stripped.startswith(prefix):
+            continue
+        return stripped[len(prefix) :].strip().strip('"').strip("'")
+    return None
