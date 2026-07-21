@@ -33,13 +33,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v3
+      - uses: conda-incubator/setup-miniconda@v3
         with:
-          init-shell: powershell
+          miniconda-version: latest
+          channels: conda-forge,defaults
+          channel-priority: flexible
+          auto-activate-base: false
 
       - name: Build packed environment
         shell: pwsh
-        run: deploy/scripts/build-packed-env.ps1
+        run: deploy/scripts/build-packed-env.ps1 -CondaExe "$env:CONDA\Scripts\conda.exe"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
