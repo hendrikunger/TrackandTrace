@@ -13,8 +13,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - role: server
-            target: ubuntu24-x64-server
           - role: station
             target: ubuntu24-x64-panel
     steps:
