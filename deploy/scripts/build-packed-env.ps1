@@ -43,6 +43,19 @@ function Resolve-Tool {
     return $null
 }
 
+function Remove-EnvIfPresent {
+    param(
+        [string]$Tool,
+        [string]$Name
+    )
+
+    & $Tool env remove -y -n $Name 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "No existing environment named $Name to remove."
+        $global:LASTEXITCODE = 0
+    }
+}
+
 $Version = Get-ProjectVersion
 $EnvName = "slf-trace-$Version-$Target"
 $OutDir = "dist/offline/$Version/$Target"
@@ -65,19 +78,19 @@ if (-not $Micromamba -and -not $Mamba) {
 }
 
 if ($Micromamba) {
-    & $Micromamba env remove -y -n $EnvName 2>$null
+    Remove-EnvIfPresent -Tool $Micromamba -Name $EnvName
     & $Micromamba create -y -n $EnvName "python=$PythonVersion" pip
     $RunnerExe = $Micromamba
     $RunnerArgs = @("run", "-n", $EnvName)
 }
 elseif ($Mamba) {
-    & $Mamba env remove -y -n $EnvName 2>$null
+    Remove-EnvIfPresent -Tool $Mamba -Name $EnvName
     & $Mamba create -y -n $EnvName "python=$PythonVersion" pip
     $RunnerExe = $Mamba
     $RunnerArgs = @("run", "-n", $EnvName)
 }
 elseif ($Conda) {
-    & $Conda env remove -y -n $EnvName 2>$null
+    Remove-EnvIfPresent -Tool $Conda -Name $EnvName
     & $Conda create -y -n $EnvName "python=$PythonVersion" pip
     $RunnerExe = $Conda
     $RunnerArgs = @("run", "-n", $EnvName)
