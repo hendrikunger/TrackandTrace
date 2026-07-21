@@ -1,0 +1,50 @@
+name: Build Artifacts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-ubuntu:
+    name: Build Ubuntu 24.04 artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          init-shell: bash
+
+      - name: Build packed environment
+        run: deploy/scripts/build-packed-env.sh
+
+      - name: Upload Ubuntu artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slf-trace-ubuntu24-x64-panel-${{ github.sha }}
+          path: dist/offline/*/ubuntu24-x64-panel
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows:
+    name: Build Windows x64 artifact
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          init-shell: powershell
+
+      - name: Build packed environment
+        shell: pwsh
+        run: deploy/scripts/build-packed-env.ps1
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: slf-trace-windows-x64-panel-${{ github.sha }}
+          path: dist/offline/*/windows-x64-panel
+          if-no-files-found: error
+          retention-days: 14
