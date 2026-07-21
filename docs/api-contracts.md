@@ -44,6 +44,26 @@ empty response means there is currently no newer request.
 The companion uses this endpoint to open one active collection window. Adapters without their own
 `rueckmeldenummer` only read while a request is active.
 
+## Label Print Request Polling
+
+`GET /stations/{station_id}/label-print-request?after_id=0`
+
+Returns the next kiosk-created label print request after the supplied raw-payload/request id. An
+empty response means there is currently no newer request.
+
+```json
+{
+  "request_id": 43,
+  "rueckmeldenummer": "DEV-RM-0001",
+  "allow_missing_values": false
+}
+```
+
+The companion uses this endpoint only for `label_printing` stations. The kiosk creates these
+requests after showing the latest measurement values for the scanned part. If
+`allow_missing_values` is true, replacement rules configured as `Warnen, Drucken erlauben` render a
+blank space for missing values; rules configured as `Drucken blockieren` still prevent printing.
+
 ## Heartbeat
 
 `POST /heartbeats`

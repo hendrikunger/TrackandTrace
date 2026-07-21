@@ -7,6 +7,7 @@ from slf_trace.api.events import publish_event
 from slf_trace.api.schemas.companion import (
     BarcodeScanRequest,
     BarcodeScanResponse,
+    LabelPrintRequestCommandResponse,
     MeasurementRequest,
     MeasurementRequestCommandResponse,
     MeasurementResponse,
@@ -22,6 +23,7 @@ from slf_trace.api.schemas.companion import (
     StationHeartbeatResponse,
 )
 from slf_trace.api.services.companion import (
+    get_next_label_print_request,
     get_next_measurement_request,
     get_part_measurement_values,
     get_station_measurement_types,
@@ -129,6 +131,34 @@ async def get_measurement_request(
     return MeasurementRequestCommandResponse(
         request_id=request.id,
         rueckmeldenummer=request.content.strip(),
+    )
+
+
+@router.get(
+    "/stations/{station_id}/label-print-request",
+    response_model=LabelPrintRequestCommandResponse,
+)
+async def get_label_print_request(
+    station_id: int,
+    after_id: int,
+    session: SessionDep,
+    x_station_id: StationIdHeader = None,
+    x_station_token: StationTokenHeader = None,
+) -> LabelPrintRequestCommandResponse:
+    await require_companion_auth(
+        session,
+        request_station_id=station_id,
+        header_station_id=x_station_id,
+        header_token=x_station_token,
+    )
+    request = await get_next_label_print_request(session, station_id, after_id)
+    if request is None:
+        return LabelPrintRequestCommandResponse()
+    raw_payload, rueckmeldenummer, allow_missing_values = request
+    return LabelPrintRequestCommandResponse(
+        request_id=raw_payload.id,
+        rueckmeldenummer=rueckmeldenummer,
+        allow_missing_values=allow_missing_values,
     )
 
 

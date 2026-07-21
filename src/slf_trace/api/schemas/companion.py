@@ -35,6 +35,12 @@ class MeasurementRequestCommandResponse(BaseModel):
     rueckmeldenummer: str | None = None
 
 
+class LabelPrintRequestCommandResponse(BaseModel):
+    request_id: int | None = None
+    rueckmeldenummer: str | None = None
+    allow_missing_values: bool = False
+
+
 class PartMeasurementValueResponse(BaseModel):
     measurement_type: str
     value: Decimal

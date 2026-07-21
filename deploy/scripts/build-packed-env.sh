@@ -35,7 +35,7 @@ else
   exit 1
 fi
 
-python -m pip install "dist/slf_trace-${VERSION}-py3-none-any.whl[smb,serial]"
+python -m pip install "dist/slf_trace-${VERSION}-py3-none-any.whl[smb,serial,print]"
 
 python - <<'PY'
 import slf_trace

@@ -123,6 +123,20 @@ WORKFLOW_OPTIONS = {
     "Laser marking": "laser_marking",
 }
 PRINTER_ADAPTER_TYPES = {"printer_stub", "label_printer", "label_printer_stub"}
+LABEL_VALUE_FORMAT_OPTIONS = {
+    "German decimal comma": "comma",
+    "Dot decimal": "dot",
+    "Raw database value": "raw",
+    "With unit": "with_unit",
+}
+LABEL_MISSING_BEHAVIOR_OPTIONS = {
+    "Drucken blockieren": "block",
+    "Warnen, Drucken erlauben": "warn_allow_print",
+}
+LABEL_PRINT_BACKEND_OPTIONS = {
+    "Windows printer": "win32print",
+    "Raw TCP/IP": "tcp",
+}
 SCANNER_PROTOCOL_OPTIONS = {
     "": "",
     "Keyence SR-X TCP": "Keyence SR-X TCP",
@@ -477,6 +491,123 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         width=220,
         visible=False,
     )
+    label_print_heading = pn.pane.Markdown("### Label printing", visible=False)
+    label_template_dir = pn.widgets.TextInput(
+        name="Template directory",
+        value=r"C:\SLF\TrackTrace\labels",
+        width=420,
+        visible=False,
+    )
+    label_selected_template = pn.widgets.TextInput(
+        name="Selected PRN template",
+        placeholder="SLF_81x36_.prn",
+        width=260,
+        visible=False,
+    )
+    label_available_template = pn.widgets.Select(
+        name="Available PRN templates",
+        options={},
+        width=260,
+        visible=False,
+    )
+    label_encoding = pn.widgets.Select(
+        name="Template encoding",
+        options=["cp1252", "utf-8", "latin-1"],
+        value="cp1252",
+        width=160,
+        visible=False,
+    )
+    label_print_backend = pn.widgets.Select(
+        name="Print backend",
+        options=LABEL_PRINT_BACKEND_OPTIONS,
+        value="win32print",
+        width=200,
+        visible=False,
+    )
+    label_printer_name = pn.widgets.TextInput(
+        name="Windows printer name",
+        value="Vario III 107/12",
+        width=260,
+        visible=False,
+    )
+    label_tcp_host = pn.widgets.TextInput(
+        name="TCP printer host",
+        placeholder="192.168.133.221",
+        width=220,
+        visible=False,
+    )
+    label_tcp_port = pn.widgets.IntInput(
+        name="TCP printer port",
+        start=1,
+        end=65535,
+        value=9100,
+        width=140,
+        visible=False,
+    )
+    label_require_confirmation = pn.widgets.Checkbox(
+        name="Require user confirmation before printing",
+        value=False,
+        visible=False,
+    )
+    label_replacement_table = pn.widgets.Tabulator(
+        value=pd.DataFrame(),
+        editors={
+            "measurement_type": None,
+            "search": None,
+            "replace": None,
+            "value_format": None,
+            "missing_value_behavior": None,
+        },
+        selectable=1,
+        height=180,
+        sizing_mode="stretch_width",
+        visible=False,
+    )
+    label_rule_measurement_type = pn.widgets.Select(
+        name="Measurement type",
+        options=[],
+        width=220,
+        visible=False,
+    )
+    label_rule_search = pn.widgets.TextInput(
+        name="Search text",
+        placeholder="BM[15]-283",
+        width=260,
+        visible=False,
+    )
+    label_rule_replace = pn.widgets.TextInput(
+        name="Replacement text",
+        placeholder="BM[15]{{value}}",
+        width=320,
+        visible=False,
+    )
+    label_rule_value_format = pn.widgets.Select(
+        name="Value format",
+        options=LABEL_VALUE_FORMAT_OPTIONS,
+        value="comma",
+        width=220,
+        visible=False,
+    )
+    label_rule_missing_behavior = pn.widgets.Select(
+        name="Missing value",
+        options=LABEL_MISSING_BEHAVIOR_OPTIONS,
+        value="block",
+        width=220,
+        visible=False,
+    )
+    label_rule_add_button = pn.widgets.Button(
+        name="Add rule",
+        button_type="primary",
+        width=110,
+        visible=False,
+    )
+    label_rule_remove_button = pn.widgets.Button(
+        name="Remove rule",
+        button_type="danger",
+        width=130,
+        visible=False,
+    )
+    label_rule_message = pn.pane.Alert("", alert_type="info", visible=False)
     active = pn.widgets.Checkbox(name="Active", value=True)
     station_token_status = pn.pane.Markdown("Companion token: `not configured`")
     station_token_button = pn.widgets.Button(
@@ -527,6 +658,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "SMB1 polling": "smb1_polling",
             "Serial request": "serial_request",
             "TCP/IP line": "tcp_line",
+            "Label printer": "label_printer",
             "Printer stub": "printer_stub",
         },
         value="smb1_polling",
@@ -818,6 +950,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     kiosk_waiting_for_new_measurement = False
     kiosk_measurement_baseline_id = 0
     kiosk_latest_label_rows: list[dict[str, Any]] = []
+    kiosk_label_print_allow_missing = False
     kiosk_station_config_fingerprint: str | None = None
     kiosk_browser_reload_pending = False
 
@@ -828,6 +961,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     creating_station = False
     selected_adapter_index: int | None = None
     adapter_configs: list[dict[str, Any]] = []
+    label_replacement_rules: list[dict[str, Any]] = []
+    selected_label_rule_index: int | None = None
     workflow_config_value: dict[str, Any] = {}
     selected_history: dict[int, list[dict[str, Any]]] = {}
     loading_station_form = False
@@ -869,8 +1004,14 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             row["code"] for row in measurement_type_rows if row.get("active") is True
         ]
         adapter_measurement_type.options = active_type_options
+        label_rule_measurement_type.options = active_type_options
         if active_type_options and adapter_measurement_type.value not in active_type_options:
             adapter_measurement_type.value = active_type_options[0]
+        if (
+            active_type_options
+            and label_rule_measurement_type.value not in active_type_options
+        ):
+            label_rule_measurement_type.value = active_type_options[0]
         if select_code is not None:
             matching_rows = measurement_type_table.value.index[
                 measurement_type_table.value["code"] == select_code
@@ -1030,7 +1171,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             workflow_config_value = dict(station.get("workflow_config") or {})
             workflow_config_preview.object = workflow_config_value
             load_laser_workflow_fields(workflow_config_value)
+            load_label_workflow_fields(workflow_config_value)
+            update_label_template_options(station)
             update_laser_workflow_visibility()
+            update_label_workflow_visibility()
             active.value = station["active"]
             load_adapter_configs(station.get("adapter_config") or [])
         finally:
@@ -1074,7 +1218,10 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             workflow_config_value = {}
             workflow_config_preview.object = workflow_config_value
             load_laser_workflow_fields(workflow_config_value)
+            load_label_workflow_fields(workflow_config_value)
+            update_label_template_options({})
             update_laser_workflow_visibility()
+            update_label_workflow_visibility()
             active.value = True
             load_adapter_configs([])
         finally:
@@ -1221,6 +1368,226 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             output["path"] = laser_output_path.value.strip()
         config["laser_output"] = output
         return config
+
+    def update_label_workflow_visibility(_: object | None = None) -> None:
+        is_label = normalize_workflow_type(str(workflow_type.value)) == "label_printing"
+        is_tcp = label_print_backend.value == "tcp"
+        label_print_heading.visible = is_label
+        for widget in (
+            label_template_dir,
+            label_available_template,
+            label_selected_template,
+            label_encoding,
+            label_print_backend,
+            label_require_confirmation,
+            label_replacement_table,
+            label_rule_measurement_type,
+            label_rule_search,
+            label_rule_replace,
+            label_rule_value_format,
+            label_rule_missing_behavior,
+            label_rule_add_button,
+            label_rule_remove_button,
+        ):
+            widget.visible = is_label
+        label_printer_name.visible = is_label and not is_tcp
+        label_tcp_host.visible = is_label
+        label_tcp_port.visible = is_label
+        label_rule_message.visible = is_label and bool(label_rule_message.object)
+
+    def update_label_template_options(station: dict[str, Any]) -> None:
+        label_status = ((station.get("adapter_status") or {}).get("label_printer") or {})
+        templates = label_status.get("available_templates") or []
+        options = {
+            template: template
+            for template in templates
+            if isinstance(template, str) and template.strip()
+        }
+        label_available_template.options = options
+        if label_selected_template.value in options.values():
+            label_available_template.value = label_selected_template.value
+        elif options:
+            label_available_template.value = next(iter(options.values()))
+
+    def select_available_label_template(event: Any) -> None:
+        if loading_station_form or not event.new:
+            return
+        label_selected_template.value = str(event.new)
+
+    def load_label_workflow_fields(config: dict[str, Any]) -> None:
+        nonlocal label_replacement_rules, selected_label_rule_index
+        raw = config.get("label_printing") if isinstance(config.get("label_printing"), dict) else {}
+        label_template_dir.value = str(raw.get("template_dir") or r"C:\SLF\TrackTrace\labels")
+        label_selected_template.value = str(raw.get("selected_template") or "")
+        label_encoding.value = str(raw.get("encoding") or "cp1252")
+        set_select_value(label_print_backend, str(raw.get("print_backend") or "win32print"))
+        label_printer_name.value = str(raw.get("printer_name") or "Vario III 107/12")
+        label_tcp_host.value = str(raw.get("tcp_host") or "")
+        label_tcp_port.value = int(raw.get("tcp_port") or 9100)
+        label_require_confirmation.value = bool(raw.get("require_confirmation", False))
+        rules = raw.get("replacements") or []
+        label_replacement_rules = [
+            normalize_label_replacement_rule(rule)
+            for rule in rules
+            if isinstance(rule, dict)
+        ]
+        selected_label_rule_index = None
+        label_replacement_table.selection = []
+        render_label_replacement_rules()
+
+    def sync_label_workflow_config(_: object | None = None) -> None:
+        nonlocal workflow_config_value
+        if loading_station_form:
+            return
+        update_label_workflow_visibility()
+        if normalize_workflow_type(str(workflow_type.value)) != "label_printing":
+            autosave_config()
+            return
+
+        workflow_config_value = build_label_workflow_config(workflow_config_value)
+        workflow_config_preview.object = workflow_config_value
+        autosave_config()
+
+    def build_label_workflow_config(existing: dict[str, Any]) -> dict[str, Any]:
+        config = dict(existing)
+        config["label_printing"] = {
+            "template_dir": label_template_dir.value.strip(),
+            "selected_template": label_selected_template.value.strip(),
+            "encoding": label_encoding.value or "cp1252",
+            "print_backend": label_print_backend.value or "win32print",
+            "printer_name": label_printer_name.value.strip() or "Vario III 107/12",
+            "tcp_host": label_tcp_host.value.strip(),
+            "tcp_port": label_tcp_port.value or 9100,
+            "require_confirmation": bool(label_require_confirmation.value),
+            "replacements": [dict(rule) for rule in label_replacement_rules],
+        }
+        return config
+
+    def normalize_label_replacement_rule(rule: dict[str, Any]) -> dict[str, Any]:
+        value_format = str(rule.get("value_format") or "comma")
+        if value_format not in LABEL_VALUE_FORMAT_OPTIONS.values():
+            value_format = "comma"
+        missing_behavior = str(rule.get("missing_value_behavior") or "block")
+        if missing_behavior not in LABEL_MISSING_BEHAVIOR_OPTIONS.values():
+            missing_behavior = "block"
+        return {
+            "measurement_type": str(rule.get("measurement_type") or "").strip(),
+            "search": str(rule.get("search") or ""),
+            "replace": str(rule.get("replace") or "{{value}}"),
+            "value_format": value_format,
+            "missing_value_behavior": missing_behavior,
+        }
+
+    def render_label_replacement_rules() -> None:
+        label_replacement_table.value = pd.DataFrame(
+            [
+                {
+                    "measurement_type": rule.get("measurement_type"),
+                    "search": rule.get("search"),
+                    "replace": rule.get("replace"),
+                    "value_format": label_value_format_label(str(rule.get("value_format"))),
+                    "missing_value_behavior": label_missing_behavior_label(
+                        str(rule.get("missing_value_behavior"))
+                    ),
+                }
+                for rule in label_replacement_rules
+            ]
+        )
+
+    def label_value_format_label(value: str) -> str:
+        return next(
+            (
+                label
+                for label, option_value in LABEL_VALUE_FORMAT_OPTIONS.items()
+                if option_value == value
+            ),
+            value or "comma",
+        )
+
+    def label_missing_behavior_label(value: str) -> str:
+        return next(
+            (
+                label
+                for label, option_value in LABEL_MISSING_BEHAVIOR_OPTIONS.items()
+                if option_value == value
+            ),
+            "Drucken blockieren",
+        )
+
+    def select_label_replacement_rule(event: Any) -> None:
+        nonlocal selected_label_rule_index
+        if not event.new:
+            selected_label_rule_index = None
+            return
+        row_index = event.new[0]
+        if row_index >= len(label_replacement_rules):
+            selected_label_rule_index = None
+            return
+        selected_label_rule_index = row_index
+        load_label_replacement_rule_form(label_replacement_rules[row_index])
+
+    def load_label_replacement_rule_form(rule: dict[str, Any]) -> None:
+        set_select_value(
+            label_rule_measurement_type,
+            str(rule.get("measurement_type") or label_rule_measurement_type.value or ""),
+        )
+        label_rule_search.value = str(rule.get("search") or "")
+        label_rule_replace.value = str(rule.get("replace") or "{{value}}")
+        set_select_value(label_rule_value_format, str(rule.get("value_format") or "comma"))
+        set_select_value(
+            label_rule_missing_behavior,
+            str(rule.get("missing_value_behavior") or "block"),
+        )
+
+    def current_label_replacement_rule() -> dict[str, Any]:
+        measurement_type = str(label_rule_measurement_type.value or "").strip()
+        if not measurement_type:
+            raise ValueError("Measurement type is required.")
+        if not label_rule_search.value:
+            raise ValueError("Search text is required.")
+        if not label_rule_replace.value:
+            raise ValueError("Replacement text is required.")
+        return {
+            "measurement_type": measurement_type,
+            "search": label_rule_search.value,
+            "replace": label_rule_replace.value,
+            "value_format": label_rule_value_format.value or "comma",
+            "missing_value_behavior": label_rule_missing_behavior.value or "block",
+        }
+
+    def add_or_update_label_replacement_rule(_: object | None = None) -> None:
+        nonlocal selected_label_rule_index, workflow_config_value
+        try:
+            rule = current_label_replacement_rule()
+        except Exception as exc:  # noqa: BLE001
+            set_message(label_rule_message, f"Could not save replacement rule: {exc}", "danger")
+            update_label_workflow_visibility()
+            return
+        if selected_label_rule_index is None:
+            label_replacement_rules.append(rule)
+            selected_label_rule_index = len(label_replacement_rules) - 1
+        else:
+            label_replacement_rules[selected_label_rule_index] = rule
+        render_label_replacement_rules()
+        label_replacement_table.selection = [selected_label_rule_index]
+        label_rule_message.visible = False
+        workflow_config_value = build_label_workflow_config(workflow_config_value)
+        workflow_config_preview.object = workflow_config_value
+        autosave_config()
+
+    def remove_label_replacement_rule(_: object | None = None) -> None:
+        nonlocal selected_label_rule_index, workflow_config_value
+        if selected_label_rule_index is None:
+            set_message(label_rule_message, "Select a replacement rule first.", "warning")
+            update_label_workflow_visibility()
+            return
+        label_replacement_rules.pop(selected_label_rule_index)
+        selected_label_rule_index = None
+        render_label_replacement_rules()
+        label_replacement_table.selection = []
+        workflow_config_value = build_label_workflow_config(workflow_config_value)
+        workflow_config_preview.object = workflow_config_value
+        autosave_config()
 
     def start_new_station(_: object | None = None) -> None:
         nonlocal creating_station, selected_station_id
@@ -1392,10 +1759,15 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def current_adapter_values() -> dict[str, Any]:
         if adapter_type.value in PRINTER_ADAPTER_TYPES:
+            default_name = (
+                "label-printer"
+                if adapter_type.value == "label_printer"
+                else "printer-stub"
+            )
             return {
                 "type": adapter_type.value,
                 "enabled": adapter_enabled.value,
-                "name": adapter_name.value.strip() or "printer-stub",
+                "name": adapter_name.value.strip() or default_name,
             }
 
         if adapter_type.value == "tcp_line":
@@ -1745,6 +2117,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         nonlocal kiosk_current_station_id, kiosk_current_barcode, kiosk_last_scan_raw_payload_id
         nonlocal kiosk_pending_existing_measurement, kiosk_waiting_for_new_measurement
         nonlocal kiosk_measurement_baseline_id, kiosk_latest_label_rows
+        nonlocal kiosk_label_print_allow_missing
         nonlocal kiosk_station_config_fingerprint, kiosk_browser_reload_pending
         if kiosk_station.value is None:
             return
@@ -1754,10 +2127,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_waiting_for_new_measurement = False
         kiosk_measurement_baseline_id = 0
         kiosk_latest_label_rows = []
+        kiosk_label_print_allow_missing = False
         kiosk_keep_measurement_button.visible = False
         kiosk_new_measurement_button.visible = False
         kiosk_print_button.visible = False
         kiosk_print_button.disabled = True
+        kiosk_print_button.name = "Etikett drucken"
         with session_scope(settings) as session:
             latest_scan = load_latest_scanner_raw_payload(session, kiosk_current_station_id)
         kiosk_last_scan_raw_payload_id = latest_scan[0] if latest_scan is not None else None
@@ -1848,7 +2223,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
 
     def accept_kiosk_barcode(_: object | None = None) -> None:
         nonlocal kiosk_current_barcode, kiosk_pending_existing_measurement
-        nonlocal kiosk_waiting_for_new_measurement
+        nonlocal kiosk_waiting_for_new_measurement, kiosk_label_print_allow_missing
         if kiosk_current_station_id is None:
             set_message(kiosk_message, "Keine Station ausgewählt.", "danger")
             return
@@ -1869,6 +2244,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         kiosk_new_measurement_button.visible = False
         kiosk_print_button.visible = False
         kiosk_print_button.disabled = True
+        kiosk_print_button.name = "Etikett drucken"
+        kiosk_label_print_allow_missing = False
         for input_widget in kiosk_measurement_inputs.values():
             input_widget.disabled = False
         kiosk_check_measurement_button.disabled = False
@@ -1987,7 +2364,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         rueckmeldenummer_value: str,
         station: dict[str, Any],
     ) -> None:
-        nonlocal kiosk_latest_label_rows
+        nonlocal kiosk_latest_label_rows, kiosk_label_print_allow_missing
         try:
             with session_scope(settings) as session:
                 kiosk_latest_label_rows = load_latest_measurement_values_for_part(
@@ -2002,16 +2379,40 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             return
 
         if kiosk_latest_label_rows:
+            print_status = label_print_status(kiosk_latest_label_rows, station)
             kiosk_message.object = label_printing_measurements_html(
                 rueckmeldenummer_value,
                 kiosk_latest_label_rows,
                 station=station,
+                footer=label_print_status_footer(print_status, station),
             )
             kiosk_message.alert_type = "success"
             kiosk_message.visible = True
-            kiosk_print_button.visible = station_has_printer_adapter(station)
-            kiosk_print_button.disabled = not station_has_printer_adapter(station)
-            update_kiosk_status(step=3 if station_has_printer_adapter(station) else 2)
+            kiosk_print_button.visible = False
+            kiosk_print_button.disabled = True
+            kiosk_label_print_allow_missing = False
+            if not station_has_printer_adapter(station):
+                update_kiosk_status(step=2)
+                return
+            if print_status["blocked"]:
+                kiosk_message.alert_type = "warning"
+                update_kiosk_status(step=2)
+                return
+            if print_status["warned"]:
+                kiosk_label_print_allow_missing = True
+                kiosk_print_button.name = "Trotzdem drucken"
+                kiosk_print_button.visible = True
+                kiosk_print_button.disabled = False
+                kiosk_message.alert_type = "warning"
+                update_kiosk_status(step=2)
+                return
+            if label_print_requires_confirmation(station):
+                kiosk_print_button.name = "Etikett drucken"
+                kiosk_print_button.visible = True
+                kiosk_print_button.disabled = False
+                update_kiosk_status(step=3)
+                return
+            request_kiosk_label_print(allow_missing_values=False)
             return
 
         kiosk_latest_label_rows = []
@@ -2082,18 +2483,51 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         if not kiosk_latest_label_rows:
             set_message(kiosk_message, "Keine Messwerte zum Drucken geladen.", "warning")
             return
+        request_kiosk_label_print(allow_missing_values=kiosk_label_print_allow_missing)
 
-        update_kiosk_status(step=3)
+    def request_kiosk_label_print(*, allow_missing_values: bool) -> None:
+        nonlocal kiosk_current_barcode, kiosk_label_print_allow_missing
+        if kiosk_current_station_id is None or kiosk_current_barcode is None:
+            return
+        try:
+            with session_scope(settings) as session:
+                create_label_print_request(
+                    session,
+                    station_id=kiosk_current_station_id,
+                    rueckmeldenummer=kiosk_current_barcode,
+                    allow_missing_values=allow_missing_values,
+                )
+        except Exception as exc:  # noqa: BLE001
+            set_message(
+                kiosk_message,
+                f"Druckauftrag konnte nicht gesendet werden: {exc}",
+                "danger",
+            )
+            return
+
         station = station_row_by_id(kiosk_current_station_id)
+        footer = (
+            "Druckauftrag mit fehlenden Werten wurde an die Station gesendet."
+            if allow_missing_values
+            else "Druckauftrag wurde an die Station gesendet."
+        )
         kiosk_message.object = label_printing_measurements_html(
             kiosk_current_barcode,
             kiosk_latest_label_rows,
             station=station,
-            title="Druck vorbereitet",
-            footer="Printer adapter ist aktuell ein Stub. Kein echtes Etikett wurde gesendet.",
+            title="Druckauftrag gesendet",
+            footer=footer,
         )
         kiosk_message.alert_type = "success"
         kiosk_message.visible = True
+        kiosk_print_button.visible = False
+        kiosk_print_button.disabled = True
+        kiosk_print_button.name = "Etikett drucken"
+        kiosk_label_print_allow_missing = False
+        kiosk_barcode.value = ""
+        kiosk_current_barcode = None
+        update_kiosk_status(step=1)
+        maybe_reload_kiosk_browser()
 
     def check_kiosk_measurement(_: object | None = None) -> None:
         nonlocal kiosk_current_barcode, kiosk_waiting_for_new_measurement
@@ -2395,6 +2829,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
     ):
         field_widget.param.watch(autosave_config, "value")
     workflow_type.param.watch(sync_laser_workflow_config, "value")
+    workflow_type.param.watch(sync_label_workflow_config, "value")
     for field_widget in (
         laser_output_mode,
         laser_output_path,
@@ -2408,6 +2843,21 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         laser_smb_password_env,
     ):
         field_widget.param.watch(sync_laser_workflow_config, "value")
+    for field_widget in (
+        label_template_dir,
+        label_selected_template,
+        label_encoding,
+        label_print_backend,
+        label_printer_name,
+        label_tcp_host,
+        label_tcp_port,
+        label_require_confirmation,
+    ):
+        field_widget.param.watch(sync_label_workflow_config, "value")
+    label_available_template.param.watch(select_available_label_template, "value")
+    label_replacement_table.param.watch(select_label_replacement_rule, "selection")
+    label_rule_add_button.on_click(add_or_update_label_replacement_rule)
+    label_rule_remove_button.on_click(remove_label_replacement_rule)
     for field_widget in (
         measurement_type_code,
         measurement_type_label,
@@ -2523,6 +2973,32 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                         ncols=3,
                         align="start",
                     ),
+                    label_print_heading,
+                    pn.GridBox(
+                        label_template_dir,
+                        label_available_template,
+                        label_selected_template,
+                        label_encoding,
+                        label_print_backend,
+                        label_printer_name,
+                        label_tcp_host,
+                        label_tcp_port,
+                        label_require_confirmation,
+                        ncols=2,
+                        align="start",
+                    ),
+                    label_replacement_table,
+                    pn.GridBox(
+                        label_rule_measurement_type,
+                        label_rule_search,
+                        label_rule_replace,
+                        label_rule_value_format,
+                        label_rule_missing_behavior,
+                        ncols=2,
+                        align="start",
+                    ),
+                    pn.Row(label_rule_add_button, label_rule_remove_button),
+                    label_rule_message,
                     pn.Accordion(
                         ("Workflow config JSON", workflow_config_preview),
                         active=[],
@@ -2613,6 +3089,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                 "smb1_polling": "smb1-polling",
                 "tcp_line": "tcp-line",
                 "serial_request": "serial-request",
+                "label_printer": "label-printer",
                 "printer_stub": "printer-stub",
             }
             known_default_names = set(default_names.values())
@@ -3451,6 +3928,95 @@ def create_measurement_request(
             content=rueckmeldenummer,
         )
     )
+
+
+def create_label_print_request(
+    session: Session,
+    *,
+    station_id: int,
+    rueckmeldenummer: str,
+    allow_missing_values: bool = False,
+) -> None:
+    content = json.dumps(
+        {
+            "rueckmeldenummer": rueckmeldenummer,
+            "allow_missing_values": allow_missing_values,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    request_key = f"label_print_request:{station_id}:{rueckmeldenummer}:{uuid4()}"
+    session.add(
+        RawPayload(
+            station_id=station_id,
+            source_type="label_print_request",
+            payload_hash=sha256(request_key.encode("utf-8")).hexdigest(),
+            content=content,
+        )
+    )
+
+
+def label_print_config(station: dict[str, Any] | None) -> dict[str, Any]:
+    workflow_config = (station or {}).get("workflow_config") or {}
+    label_config = (
+        workflow_config.get("label_printing")
+        if isinstance(workflow_config, dict)
+        else {}
+    )
+    return label_config if isinstance(label_config, dict) else {}
+
+
+def label_print_replacement_rules(station: dict[str, Any] | None) -> list[dict[str, Any]]:
+    rules = label_print_config(station).get("replacements") or []
+    return [rule for rule in rules if isinstance(rule, dict)]
+
+
+def label_print_requires_confirmation(station: dict[str, Any] | None) -> bool:
+    return bool(label_print_config(station).get("require_confirmation", False))
+
+
+def label_print_status(
+    rows: list[dict[str, Any]],
+    station: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    values_by_type = {
+        str(row.get("measurement_type")): row for row in rows if row.get("measurement_type")
+    }
+    label_by_code = {
+        str(detail.get("code")): str(detail.get("label") or detail.get("code"))
+        for detail in (station or {}).get("measurement_type_details", [])
+        if detail.get("code")
+    }
+    blocked: list[str] = []
+    warned: list[str] = []
+    for rule in label_print_replacement_rules(station):
+        measurement_type = str(rule.get("measurement_type") or "").strip()
+        if not measurement_type or measurement_type in values_by_type:
+            continue
+        label = label_by_code.get(measurement_type, measurement_type)
+        if str(rule.get("missing_value_behavior") or "block") == "warn_allow_print":
+            warned.append(label)
+        else:
+            blocked.append(label)
+    return {"blocked": sorted(set(blocked)), "warned": sorted(set(warned))}
+
+
+def label_print_status_footer(
+    status: dict[str, list[str]],
+    station: dict[str, Any] | None,
+) -> str:
+    if status["blocked"]:
+        return "Fehlende Werte: " + ", ".join(status["blocked"]) + ". Drucken blockiert."
+    if status["warned"]:
+        return (
+            "Fehlende Werte: "
+            + ", ".join(status["warned"])
+            + ". Drucken ist nach Bestätigung möglich; fehlende Werte werden als "
+            "Leerzeichen gedruckt."
+        )
+    if label_print_requires_confirmation(station):
+        return "Messwerte geladen. Bitte Druck bestätigen."
+    return "Messwerte geladen. Druckauftrag wird automatisch gesendet."
 
 
 def load_latest_scanner_raw_payload(

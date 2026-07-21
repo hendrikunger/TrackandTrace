@@ -116,3 +116,46 @@ part. The companion loads the latest stored value per measurement type for the s
 
 `laser_output.path` is for a locally mounted SMB share. Direct SMB writing is also supported with
 `laser_output.smb`, using `server`, `share`, `remote_dir`, `username_env`, and `password_env`.
+
+Label printing stations can use the Keyence scanner fields to load an existing part, show the latest
+measurement values in the kiosk, render a selected `.prn` template, and print it on the station PC:
+
+```json
+{
+  "workflow_type": "label_printing",
+  "workflow_config": {
+    "label_printing": {
+      "template_dir": "C:\\SLF\\TrackTrace\\labels",
+      "selected_template": "SLF_81x36_.prn",
+      "encoding": "cp1252",
+      "print_backend": "win32print",
+      "printer_name": "Vario III 107/12",
+      "tcp_host": "",
+      "tcp_port": 9100,
+      "require_confirmation": false,
+      "replacements": [
+        {
+          "measurement_type": "breite",
+          "search": "BM[15]-283",
+          "replace": "BM[15]{{value}}",
+          "value_format": "comma",
+          "missing_value_behavior": "block"
+        }
+      ]
+    }
+  },
+  "adapter_config": [
+    {
+      "type": "label_printer",
+      "name": "label-printer",
+      "enabled": true
+    }
+  ],
+  "measurement_type_codes": []
+}
+```
+
+Use `win32print` for Windows label stations. Raw TCP/IP can be configured as a fallback when the
+printer exposes a socket interface. Missing replacement values use `block` by default, shown in the
+admin UI as `Drucken blockieren`; `warn_allow_print` lets the kiosk operator print anyway with a
+blank space for that value.

@@ -222,6 +222,7 @@ async def test_companion_routes_are_registered() -> None:
         "/api/companion/stations/{station_id}/parts/{rueckmeldenummer}/measurement-values"
         in paths
     )
+    assert "/api/companion/stations/{station_id}/label-print-request" in paths
     assert "/api/companion/parsed-measurements" in paths
     assert "/api/companion/stations/{station_id}/config" in paths
 

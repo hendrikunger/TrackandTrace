@@ -5,6 +5,7 @@ import platform
 import socket
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,14 @@ from slf_trace.companion.adapters.factory import (
 )
 from slf_trace.companion.adapters.scanner import TcpBarcodeScannerAdapter
 from slf_trace.companion.client import CompanionClient
+from slf_trace.companion.label_printer import (
+    LabelMeasurementValue,
+    LabelPrinterConfig,
+    available_label_templates,
+    load_label_template,
+    print_label_content,
+    render_label_template,
+)
 from slf_trace.companion.laser import (
     LaserMeasurementValue,
     LaserOutputTarget,
@@ -88,6 +97,7 @@ class CompanionRuntime:
         self.latest_rueckmeldenummer: str | None = None
         self.pending_measurement_request: PendingMeasurementRequest | None = None
         self.last_measurement_request_id = 0
+        self.last_label_print_request_id = 0
 
     async def fetch_station_config(self) -> dict[str, Any]:
         self.station_config = await self.client.fetch_station_config(self.config.station_id)
@@ -136,6 +146,9 @@ class CompanionRuntime:
         measurement_progress = self.active_measurement_progress_payload()
         if measurement_progress is not None:
             adapter_status["active_measurement_request"] = measurement_progress
+        label_printer_status = self.label_printer_status_payload()
+        if label_printer_status is not None:
+            adapter_status["label_printer"] = label_printer_status
         return {
             "station_id": self.config.station_id,
             "status": status,
@@ -503,6 +516,8 @@ class CompanionRuntime:
                 self.adapters.append(self.active_scanner_adapter)
             if self.is_measurement_capture_workflow() or self.is_laser_marking_workflow():
                 await self.sync_measurement_request_cursor()
+            if self.is_label_printing_workflow():
+                await self.sync_label_print_request_cursor()
             try:
                 await self.send_heartbeat(status="starting" if adapters_ready else "degraded")
             except CLIENT_FAILURES as exc:
@@ -519,6 +534,8 @@ class CompanionRuntime:
                 runtime_tasks.append(asyncio.create_task(self.run_measurement_request_loop()))
             if self.is_laser_marking_workflow():
                 runtime_tasks.append(asyncio.create_task(self.run_laser_output_request_loop()))
+            if self.is_label_printing_workflow():
+                runtime_tasks.append(asyncio.create_task(self.run_label_print_request_loop()))
             reload_task = asyncio.create_task(self.config_reload_event.wait())
 
             try:
@@ -779,6 +796,20 @@ class CompanionRuntime:
                 )
             await asyncio.sleep(0.5)
 
+    async def run_label_print_request_loop(self) -> None:
+        while True:
+            try:
+                await self.fetch_label_print_request_once()
+            except Exception as exc:  # noqa: BLE001 - polling loop is a process safety boundary.
+                logger.exception(
+                    "Label print request loop failed; companion will keep running",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+            await asyncio.sleep(0.5)
+
     async def sync_measurement_request_cursor(self, *, max_requests: int = 1000) -> None:
         for _ in range(max_requests):
             try:
@@ -805,6 +836,35 @@ class CompanionRuntime:
             extra={
                 "station_id": self.config.station_id,
                 "request_id": self.last_measurement_request_id,
+            },
+        )
+
+    async def sync_label_print_request_cursor(self, *, max_requests: int = 1000) -> None:
+        for _ in range(max_requests):
+            try:
+                request = await self.client.fetch_label_print_request(
+                    self.config.station_id,
+                    self.last_label_print_request_id,
+                )
+            except CLIENT_FAILURES as exc:
+                logger.warning(
+                    "Label print request cursor sync failed; companion will continue",
+                    extra={
+                        "station_id": self.config.station_id,
+                        "request_id": self.last_label_print_request_id,
+                        "error": exc.__class__.__name__,
+                    },
+                )
+                return
+            request_id = request.get("request_id")
+            if request_id is None:
+                return
+            self.last_label_print_request_id = int(request_id)
+        logger.warning(
+            "Stopped label print request cursor sync at limit",
+            extra={
+                "station_id": self.config.station_id,
+                "request_id": self.last_label_print_request_id,
             },
         )
 
@@ -892,6 +952,144 @@ class CompanionRuntime:
         )
         return True
 
+    async def fetch_label_print_request_once(self) -> bool:
+        try:
+            request = await self.client.fetch_label_print_request(
+                self.config.station_id,
+                self.last_label_print_request_id,
+            )
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Label print request poll failed; companion will keep running",
+                extra={
+                    "station_id": self.config.station_id,
+                    "request_id": self.last_label_print_request_id,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            return False
+        request_id = request.get("request_id")
+        if request_id is None:
+            return False
+
+        self.last_label_print_request_id = int(request_id)
+        rueckmeldenummer = str(request.get("rueckmeldenummer") or "").strip()
+        if not rueckmeldenummer:
+            return False
+
+        await self.handle_label_print_request(
+            rueckmeldenummer,
+            allow_missing_values=bool(request.get("allow_missing_values", False)),
+        )
+        logger.info(
+            "Accepted label print request",
+            extra={
+                "station_id": self.config.station_id,
+                "request_id": self.last_label_print_request_id,
+            },
+        )
+        return True
+
+    async def handle_label_print_request(
+        self,
+        rueckmeldenummer: str,
+        *,
+        allow_missing_values: bool = False,
+    ) -> None:
+        config = LabelPrinterConfig.from_workflow_config(self.workflow_config())
+        try:
+            response = await self.client.fetch_part_measurement_values(
+                self.config.station_id,
+                rueckmeldenummer,
+            )
+        except CLIENT_FAILURES as exc:
+            logger.warning(
+                "Label measurement lookup failed",
+                extra={
+                    "station_id": self.config.station_id,
+                    "rueckmeldenummer": rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.enqueue_station_event(
+                event_type="label.measurement_lookup_failed",
+                severity="error",
+                message="Label station could not fetch measurement values for scanned part.",
+                context={
+                    "rueckmeldenummer": rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
+            return
+
+        try:
+            values = [
+                LabelMeasurementValue(
+                    measurement_type=str(value["measurement_type"]),
+                    value=Decimal(str(value["value"])),
+                    unit=value.get("unit"),
+                )
+                for value in response.get("values", [])
+            ]
+            rendered = render_label_template(
+                load_label_template(config),
+                rueckmeldenummer=str(response["rueckmeldenummer"]),
+                values=values,
+                rules=config.replacements,
+                allow_missing_values=allow_missing_values,
+            )
+            if not rendered.printable:
+                self.enqueue_station_event(
+                    event_type="label.print_blocked",
+                    severity="warning",
+                    message=(
+                        "Label print was blocked because configured measurement values "
+                        "are missing."
+                    ),
+                    context={
+                        "rueckmeldenummer": rueckmeldenummer,
+                        "missing_blocked": rendered.missing_blocked,
+                        "missing_warned": rendered.missing_warned,
+                        "allow_missing_values": allow_missing_values,
+                    },
+                )
+                return
+
+            destination = await print_label_content(config, rendered.content)
+            self.enqueue_station_event(
+                event_type="label.printed",
+                severity="info",
+                message="Label print job was sent.",
+                context={
+                    "rueckmeldenummer": rueckmeldenummer,
+                    "template": config.selected_template,
+                    "destination": destination,
+                    "replaced_count": rendered.replaced_count,
+                    "missing_warned": rendered.missing_warned,
+                    "allow_missing_values": allow_missing_values,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - printer APIs and files raise mixed errors.
+            logger.exception(
+                "Label print failed",
+                extra={
+                    "station_id": self.config.station_id,
+                    "rueckmeldenummer": rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                },
+            )
+            self.enqueue_station_event(
+                event_type="label.print_failed",
+                severity="error",
+                message="Label station could not print the label.",
+                context={
+                    "rueckmeldenummer": rueckmeldenummer,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
+
     def measurement_needed(self) -> bool:
         return self.pending_measurement_request is not None
 
@@ -970,11 +1168,42 @@ class CompanionRuntime:
         config = (self.station_config or {}).get("workflow_config") or {}
         return config if isinstance(config, dict) else {}
 
+    def label_printer_status_payload(self) -> dict[str, Any] | None:
+        if not self.is_label_printing_workflow():
+            return None
+        try:
+            config = LabelPrinterConfig.from_workflow_config(self.workflow_config())
+            templates = available_label_templates(config)
+            selected_available = (
+                config.selected_template in templates if config.selected_template else False
+            )
+            return {
+                "template_dir": str(config.template_dir),
+                "selected_template": config.selected_template,
+                "available_templates": templates,
+                "selected_template_available": selected_available,
+                "print_backend": config.print_backend,
+                "printer_name": config.printer_name,
+                "tcp_host": config.tcp_host,
+                "tcp_port": config.tcp_port,
+                "require_confirmation": config.require_confirmation,
+                "replacement_count": len(config.replacements),
+            }
+        except Exception as exc:  # noqa: BLE001 - heartbeat status must not break runtime.
+            return {
+                "state": "configuration_error",
+                "error": exc.__class__.__name__,
+                "message": str(exc),
+            }
+
     def is_measurement_capture_workflow(self) -> bool:
         return self.workflow_type() == "measurement_capture"
 
     def is_laser_marking_workflow(self) -> bool:
         return self.workflow_type() == "laser_marking"
+
+    def is_label_printing_workflow(self) -> bool:
+        return self.workflow_type() == "label_printing"
 
 
 def config_from_settings(settings: Settings | None = None) -> CompanionRuntimeConfig:

@@ -1,3 +1,4 @@
+import json
 from hashlib import sha256
 
 from fastapi import HTTPException, status
@@ -348,6 +349,39 @@ async def get_next_measurement_request(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_next_label_print_request(
+    session: AsyncSession,
+    station_id: int,
+    after_id: int,
+) -> tuple[RawPayload, str, bool] | None:
+    await get_station_or_404(session, station_id)
+    result = await session.execute(
+        select(RawPayload)
+        .where(
+            RawPayload.station_id == station_id,
+            RawPayload.source_type == "label_print_request",
+            RawPayload.id > after_id,
+        )
+        .order_by(RawPayload.id.asc())
+        .limit(1)
+    )
+    raw_payload = result.scalar_one_or_none()
+    if raw_payload is None:
+        return None
+
+    try:
+        content = json.loads(raw_payload.content)
+    except json.JSONDecodeError:
+        return raw_payload, raw_payload.content.strip(), False
+    if not isinstance(content, dict):
+        return raw_payload, raw_payload.content.strip(), False
+    return (
+        raw_payload,
+        str(content.get("rueckmeldenummer") or "").strip(),
+        bool(content.get("allow_missing_values", False)),
+    )
 
 
 async def get_part_measurement_values(

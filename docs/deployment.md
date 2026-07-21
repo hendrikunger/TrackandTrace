@@ -217,6 +217,10 @@ STATION_ID=<station-id>
 STATION_TOKEN=<token-created-in-admin-ui>
 ```
 
+Windows label-printing stations should use artifacts built with the `print` optional dependency so
+`pywin32` is available for the preferred `win32print` backend. Raw TCP/IP printing remains
+available as a fallback when the printer is reachable over the network.
+
 Manage and inspect the companion task:
 
 ```powershell
@@ -555,7 +559,8 @@ The script:
 
 - fetches and fast-forwards the configured branch, defaulting to `origin/main`
 - refuses to continue if the station checkout has local changes
-- reinstalls the package into the existing station environment with `smb` and `serial` extras
+- reinstalls the package into the existing station environment with `smb`, `serial`, and `print`
+  extras
 - refreshes `/usr/local/bin/slf-trace-kiosk-browser` from the checkout
 - restarts `slf-trace-companion.service`
 - runs a companion service check and central kiosk URL smoke check when `SERVER_URL` and `STATION_ID`

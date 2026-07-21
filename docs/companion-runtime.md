@@ -30,6 +30,8 @@ The runtime:
   changes
 - polls `/api/companion/stations/{station_id}/measurement-request?after_id=<id>` for
   barcode-created collection requests on measurement-capture stations
+- polls `/api/companion/stations/{station_id}/label-print-request?after_id=<id>` for
+  kiosk-created print requests on label-printing stations
 - builds configured station adapters from the returned `adapters` list
 - sends heartbeats to `/api/companion/heartbeats`
 - sends barcode scans immediately to `/api/companion/barcode-scans`
@@ -81,6 +83,27 @@ event listing the missing measurement types. If no value has arrived yet, the re
 polling adapters such as SMB can keep waiting for the device file. A station with one expected
 measurement type still behaves like the current simple stations: the first valid adapter value
 completes the request immediately.
+
+## Label Print Requests
+
+Label printing stations use the scanner for part selection, then the kiosk creates an explicit
+print request after the latest measurement values have been shown to the operator. This keeps a raw
+scanner event from producing duplicate labels if the kiosk is also reacting to that scan.
+
+For each print request, the companion:
+
+1. fetches the latest measurement values for the scanned Rückmeldenummer
+2. loads the selected `.prn` template from the station-local template directory
+3. applies the configured literal replacement rules
+4. blocks or warns on missing values according to each rule
+5. prints with `win32print` on Windows or raw TCP/IP when configured
+
+The preferred backend is `win32print` with printer name `Vario III 107/12`. If raw TCP/IP fallback
+is configured, the companion can send the rendered printer data to port `9100`.
+
+The label printer heartbeat includes the configured template directory, selected template,
+available `.prn` files, backend, printer name, TCP target, confirmation mode, and replacement rule
+count so the admin UI can guide setup without manual JSON editing.
 
 Log rotation is controlled by:
 

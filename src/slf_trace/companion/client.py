@@ -31,6 +31,16 @@ class CompanionClient:
             f"/api/companion/stations/{station_id}/measurement-request?after_id={after_id}",
         )
 
+    async def fetch_label_print_request(
+        self,
+        station_id: int,
+        after_id: int,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/companion/stations/{station_id}/label-print-request?after_id={after_id}",
+        )
+
     async def fetch_part_measurement_values(
         self,
         station_id: int,

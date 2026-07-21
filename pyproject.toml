@@ -32,6 +32,9 @@ smb = [
 serial = [
     "pyserial>=3.5",
 ]
+print = [
+    "pywin32>=306; sys_platform == 'win32'",
+]
 
 [project.scripts]
 slf-trace-api = "slf_trace.api.main:run"

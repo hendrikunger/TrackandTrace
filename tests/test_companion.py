@@ -49,6 +49,7 @@ class FakeClient:
         self.fail_measurement_request = fail_measurement_request
         self.fail_heartbeat = fail_heartbeat
         self.measurement_requests = []
+        self.label_print_requests = []
         self.station_config_calls = []
         self.heartbeats = []
         self.events = []
@@ -82,6 +83,16 @@ class FakeClient:
             if request["request_id"] > after_id:
                 return request
         return {"request_id": None, "rueckmeldenummer": None}
+
+    async def fetch_label_print_request(self, station_id: int, after_id: int):
+        for request in self.label_print_requests:
+            if request["request_id"] > after_id:
+                return request
+        return {
+            "request_id": None,
+            "rueckmeldenummer": None,
+            "allow_missing_values": False,
+        }
 
     async def fetch_part_measurement_values(self, station_id: int, rueckmeldenummer: str):
         self.part_measurement_value_requests.append((station_id, rueckmeldenummer))
@@ -897,6 +908,109 @@ async def test_runtime_writes_laser_output_file_after_manual_request(tmp_path) -
     assert (output_dir / "RM-LASER.txt").read_text(encoding="utf-8") == (
         "measurement_1\nvalue_1\nmeasurement_2\nvalue_2\n"
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_prints_label_after_manual_request(tmp_path, monkeypatch) -> None:
+    template_dir = tmp_path / "labels"
+    template_dir.mkdir()
+    (template_dir / "label.prn").write_text("BM[15]-283\r\n", encoding="cp1252")
+    client = FakeClient(
+        part_measurement_values={
+            "part_id": 17,
+            "rueckmeldenummer": "RM-LABEL",
+            "values": [
+                {"measurement_type": "breite", "value": "32.4000", "unit": "mm"},
+            ],
+        }
+    )
+    client.label_print_requests.append(
+        {
+            "request_id": 31,
+            "rueckmeldenummer": "RM-LABEL",
+            "allow_missing_values": False,
+        }
+    )
+    printed = []
+
+    async def fake_print(config, content):
+        printed.append((config.selected_template, content))
+        return "mock-printer"
+
+    monkeypatch.setattr("slf_trace.companion.runtime.print_label_content", fake_print)
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "workflow_type": "label_printing",
+        "workflow_config": {
+            "label_printing": {
+                "template_dir": str(template_dir),
+                "selected_template": "label.prn",
+                "replacements": [
+                    {
+                        "measurement_type": "breite",
+                        "search": "BM[15]-283",
+                        "replace": "BM[15]{{value}}",
+                        "value_format": "comma",
+                        "missing_value_behavior": "block",
+                    }
+                ],
+            }
+        },
+    }
+
+    assert await runtime.fetch_label_print_request_once()
+
+    assert runtime.last_label_print_request_id == 31
+    assert client.part_measurement_value_requests == [(1, "RM-LABEL")]
+    assert printed == [("label.prn", "BM[15]32,4000\n")]
+    assert runtime.outbox.pending()[0].payload["event_type"] == "label.printed"
+
+
+@pytest.mark.asyncio
+async def test_runtime_blocks_label_print_when_required_value_is_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    template_dir = tmp_path / "labels"
+    template_dir.mkdir()
+    (template_dir / "label.prn").write_text("BM[15]-283\r\n", encoding="cp1252")
+    client = FakeClient()
+    client.label_print_requests.append(
+        {
+            "request_id": 31,
+            "rueckmeldenummer": "RM-LABEL",
+            "allow_missing_values": False,
+        }
+    )
+
+    async def fake_print(config, content):
+        raise AssertionError("print should be blocked")
+
+    monkeypatch.setattr("slf_trace.companion.runtime.print_label_content", fake_print)
+    runtime = CompanionRuntime(_config(str(tmp_path / "state.sqlite3")), client=client)
+    runtime.station_config = {
+        "workflow_type": "label_printing",
+        "workflow_config": {
+            "label_printing": {
+                "template_dir": str(template_dir),
+                "selected_template": "label.prn",
+                "replacements": [
+                    {
+                        "measurement_type": "breite",
+                        "search": "BM[15]-283",
+                        "replace": "BM[15]{{value}}",
+                        "missing_value_behavior": "block",
+                    }
+                ],
+            }
+        },
+    }
+
+    assert await runtime.fetch_label_print_request_once()
+
+    queued = runtime.outbox.pending()
+    assert queued[0].payload["event_type"] == "label.print_blocked"
+    assert queued[0].payload["context"]["missing_blocked"] == ["breite"]
 
 
 @pytest.mark.asyncio

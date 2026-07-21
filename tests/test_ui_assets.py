@@ -13,6 +13,8 @@ from slf_trace.ui.main import (
     kiosk_progress_value_text,
     kiosk_station_config_hash,
     kiosk_workflow_title,
+    label_print_status,
+    label_print_status_footer,
     label_printing_measurements_html,
     laser_marking_measurements_html,
     measurement_value_html,
@@ -251,6 +253,36 @@ def test_label_printing_measurements_html_marks_configured_missing_values() -> N
     assert ">Innenring</span>" in html
     assert ">45</span>" in html
     assert ">✓</span>" in html
+
+
+def test_label_print_status_uses_configured_missing_value_policy() -> None:
+    station = {
+        "workflow_config": {
+            "label_printing": {
+                "replacements": [
+                    {
+                        "measurement_type": "breite",
+                        "missing_value_behavior": "block",
+                    },
+                    {
+                        "measurement_type": "innenring",
+                        "missing_value_behavior": "warn_allow_print",
+                    },
+                ]
+            }
+        },
+        "measurement_type_details": [
+            {"code": "breite", "label": "Breite"},
+            {"code": "innenring", "label": "Innenring"},
+        ],
+    }
+
+    status = label_print_status([], station)
+
+    assert status == {"blocked": ["Breite"], "warned": ["Innenring"]}
+    assert label_print_status_footer(status, station) == (
+        "Fehlende Werte: Breite. Drucken blockiert."
+    )
 
 
 def test_kiosk_workflow_title_uses_explicit_workflow_title() -> None:
