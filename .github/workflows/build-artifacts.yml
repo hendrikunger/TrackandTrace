@@ -7,8 +7,16 @@ on:
 
 jobs:
   build-ubuntu:
-    name: Build Ubuntu 24.04 artifact
+    name: Build Ubuntu 24.04 ${{ matrix.role }} artifact
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: server
+            target: ubuntu24-x64-server
+          - role: station
+            target: ubuntu24-x64-panel
     steps:
       - uses: actions/checkout@v4
 
@@ -17,19 +25,27 @@ jobs:
           init-shell: bash
 
       - name: Build packed environment
-        run: deploy/scripts/build-packed-env.sh
+        run: TARGET="${{ matrix.target }}" deploy/scripts/build-packed-env.sh
 
       - name: Upload Ubuntu artifact
         uses: actions/upload-artifact@v4
         with:
-          name: slf-trace-ubuntu24-x64-panel-${{ github.sha }}
-          path: dist/offline/*/ubuntu24-x64-panel
+          name: slf-trace-${{ matrix.target }}-${{ github.sha }}
+          path: dist/offline/*/${{ matrix.target }}
           if-no-files-found: error
           retention-days: 14
 
   build-windows:
-    name: Build Windows x64 artifact
+    name: Build Windows x64 ${{ matrix.role }} artifact
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: server
+            target: windows-x64-server
+          - role: station
+            target: windows-x64-panel
     steps:
       - uses: actions/checkout@v4
 
@@ -42,12 +58,12 @@ jobs:
 
       - name: Build packed environment
         shell: pwsh
-        run: deploy/scripts/build-packed-env.ps1 -CondaExe "$env:CONDA\Scripts\conda.exe"
+        run: deploy/scripts/build-packed-env.ps1 -Target "${{ matrix.target }}" -CondaExe "$env:CONDA\Scripts\conda.exe"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: slf-trace-windows-x64-panel-${{ github.sha }}
-          path: dist/offline/*/windows-x64-panel
+          name: slf-trace-${{ matrix.target }}-${{ github.sha }}
+          path: dist/offline/*/${{ matrix.target }}
           if-no-files-found: error
           retention-days: 14
