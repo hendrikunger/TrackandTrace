@@ -102,6 +102,9 @@ else {
 function Invoke-InPackedEnv {
     param([string[]]$CommandArgs)
     & $RunnerExe @RunnerArgs @CommandArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code $LASTEXITCODE`: $RunnerExe $($RunnerArgs -join ' ') $($CommandArgs -join ' ')"
+    }
 }
 
 function Remove-PlatformMetadata {
@@ -116,7 +119,7 @@ function Remove-PlatformMetadata {
         Remove-Item -Force
 }
 
-Invoke-InPackedEnv @("python", "-m", "pip", "install", "--upgrade", "pip", "build", "conda-pack")
+Invoke-InPackedEnv @("python", "-m", "pip", "install", "build", "conda-pack")
 Invoke-InPackedEnv @("python", "-m", "build", "--wheel")
 Invoke-InPackedEnv @("python", "-m", "pip", "install", "$WheelPath[smb,serial,print]")
 Invoke-InPackedEnv @("python", "-c", "import slf_trace; from slf_trace.api.main import app; from slf_trace.companion.runtime import CompanionRuntime; from slf_trace.ui.main import build_admin_app; print(slf_trace.__version__, app.title, CompanionRuntime.__name__, build_admin_app.__name__)")
