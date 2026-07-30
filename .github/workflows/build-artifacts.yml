@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-ubuntu:
     name: Build Ubuntu 24.04 ${{ matrix.role }} artifact
@@ -20,13 +23,14 @@ jobs:
 
       - uses: mamba-org/setup-micromamba@v3
         with:
-          init-shell: bash
+          init-shell: none
+          generate-run-shell: false
 
       - name: Build packed environment
         run: TARGET="${{ matrix.target }}" deploy/scripts/build-packed-env.sh
 
       - name: Upload Ubuntu artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: slf-trace-${{ matrix.target }}-${{ github.sha }}
           path: dist/offline/*/${{ matrix.target }}
@@ -49,17 +53,17 @@ jobs:
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
-          miniconda-version: latest
-          channels: conda-forge,defaults
-          channel-priority: flexible
-          auto-activate-base: false
+          miniforge-version: latest
+          channels: conda-forge
+          channel-priority: strict
+          auto-activate: false
 
       - name: Build packed environment
         shell: pwsh
         run: deploy/scripts/build-packed-env.ps1 -Target "${{ matrix.target }}" -CondaExe "$env:CONDA\Scripts\conda.exe"
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: slf-trace-${{ matrix.target }}-${{ github.sha }}
           path: dist/offline/*/${{ matrix.target }}

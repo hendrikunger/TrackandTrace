@@ -13,20 +13,20 @@ rm -rf build dist/*.whl "$OUT_DIR" "$BOOTSTRAP_ENV"
 mkdir -p "$OUT_DIR"
 
 "$PYTHON_BOOTSTRAP" -m venv "$BOOTSTRAP_ENV"
-"$BOOTSTRAP_ENV/bin/python" -m pip install --upgrade pip build conda-pack
+"$BOOTSTRAP_ENV/bin/python" -m pip install -q --upgrade pip build conda-pack
 "$BOOTSTRAP_ENV/bin/python" -m build --wheel
 
 if command -v micromamba >/dev/null 2>&1; then
   MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.local/share/mamba}"
   export MAMBA_ROOT_PREFIX
   micromamba env remove -y -n "$ENV_NAME" >/dev/null 2>&1 || true
-  micromamba create -y -n "$ENV_NAME" "python=${PYTHON_VERSION}" pip
+  micromamba create -y -q -n "$ENV_NAME" "python=${PYTHON_VERSION}" pip
   eval "$(micromamba shell hook --shell bash)"
   micromamba activate "$ENV_NAME"
   ENV_PREFIX="$MAMBA_ROOT_PREFIX/envs/$ENV_NAME"
 elif command -v mamba >/dev/null 2>&1; then
   mamba env remove -y -n "$ENV_NAME" >/dev/null 2>&1 || true
-  mamba create -y -n "$ENV_NAME" "python=${PYTHON_VERSION}" pip
+  mamba create -y -q -n "$ENV_NAME" "python=${PYTHON_VERSION}" pip
   eval "$(conda shell.bash hook)"
   conda activate "$ENV_NAME"
   ENV_PREFIX="$CONDA_PREFIX"
@@ -35,7 +35,7 @@ else
   exit 1
 fi
 
-python -m pip install "dist/slf_trace-${VERSION}-py3-none-any.whl[smb,serial,print]"
+python -m pip install -q "dist/slf_trace-${VERSION}-py3-none-any.whl[smb,serial,print]"
 
 python - <<'PY'
 import slf_trace

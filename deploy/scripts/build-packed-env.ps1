@@ -79,19 +79,24 @@ if (-not $Micromamba -and -not $Mamba) {
 
 if ($Micromamba) {
     Remove-EnvIfPresent -Tool $Micromamba -Name $EnvName
-    & $Micromamba create -y -n $EnvName "python=$PythonVersion" pip
+    & $Micromamba create -y -q -n $EnvName "python=$PythonVersion" pip
     $RunnerExe = $Micromamba
     $RunnerArgs = @("run", "-n", $EnvName)
 }
 elseif ($Mamba) {
     Remove-EnvIfPresent -Tool $Mamba -Name $EnvName
-    & $Mamba create -y -n $EnvName "python=$PythonVersion" pip
+    & $Mamba create -y -q -n $EnvName "python=$PythonVersion" pip
     $RunnerExe = $Mamba
     $RunnerArgs = @("run", "-n", $EnvName)
 }
 elseif ($Conda) {
+    & $Conda config --set conda_pypi_pip_warning false
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Could not disable conda_pypi_pip_warning; continuing."
+        $global:LASTEXITCODE = 0
+    }
     Remove-EnvIfPresent -Tool $Conda -Name $EnvName
-    & $Conda create -y -n $EnvName "python=$PythonVersion" pip
+    & $Conda create -y -q -n $EnvName "python=$PythonVersion" pip
     $RunnerExe = $Conda
     $RunnerArgs = @("run", "-n", $EnvName)
 }
@@ -119,9 +124,9 @@ function Remove-PlatformMetadata {
         Remove-Item -Force
 }
 
-Invoke-InPackedEnv @("python", "-m", "pip", "install", "build", "conda-pack")
+Invoke-InPackedEnv @("python", "-m", "pip", "install", "-q", "build", "conda-pack")
 Invoke-InPackedEnv @("python", "-m", "build", "--wheel")
-Invoke-InPackedEnv @("python", "-m", "pip", "install", "$WheelPath[smb,serial,print]")
+Invoke-InPackedEnv @("python", "-m", "pip", "install", "-q", "$WheelPath[smb,serial,print]")
 Invoke-InPackedEnv @("python", "-c", "import slf_trace; from slf_trace.api.main import app; from slf_trace.companion.runtime import CompanionRuntime; from slf_trace.ui.main import build_admin_app; print(slf_trace.__version__, app.title, CompanionRuntime.__name__, build_admin_app.__name__)")
 Invoke-InPackedEnv @("python", "-m", "conda_pack.cli", "-n", $EnvName, "-o", "$OutDir/env.zip", "--force")
 
