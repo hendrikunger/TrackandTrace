@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import sys
 from collections.abc import Sequence
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
