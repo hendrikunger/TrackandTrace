@@ -601,6 +601,12 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         width=110,
         visible=False,
     )
+    label_rule_update_button = pn.widgets.Button(
+        name="Update selected",
+        button_type="primary",
+        width=140,
+        visible=False,
+    )
     label_rule_remove_button = pn.widgets.Button(
         name="Remove rule",
         button_type="danger",
@@ -1385,6 +1391,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             label_rule_value_format,
             label_rule_missing_behavior,
             label_rule_add_button,
+            label_rule_update_button,
             label_rule_remove_button,
         ):
             widget.visible = is_label
@@ -1553,19 +1560,36 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "missing_value_behavior": label_rule_missing_behavior.value or "block",
         }
 
-    def add_or_update_label_replacement_rule(_: object | None = None) -> None:
+    def add_label_replacement_rule(_: object | None = None) -> None:
         nonlocal selected_label_rule_index, workflow_config_value
         try:
             rule = current_label_replacement_rule()
         except Exception as exc:  # noqa: BLE001
-            set_message(label_rule_message, f"Could not save replacement rule: {exc}", "danger")
+            set_message(label_rule_message, f"Could not add replacement rule: {exc}", "danger")
             update_label_workflow_visibility()
             return
+        label_replacement_rules.append(rule)
+        selected_label_rule_index = None
+        render_label_replacement_rules()
+        label_replacement_table.selection = []
+        label_rule_message.visible = False
+        workflow_config_value = build_label_workflow_config(workflow_config_value)
+        workflow_config_preview.object = workflow_config_value
+        autosave_config()
+
+    def update_label_replacement_rule(_: object | None = None) -> None:
+        nonlocal workflow_config_value
         if selected_label_rule_index is None:
-            label_replacement_rules.append(rule)
-            selected_label_rule_index = len(label_replacement_rules) - 1
-        else:
-            label_replacement_rules[selected_label_rule_index] = rule
+            set_message(label_rule_message, "Select a replacement rule first.", "warning")
+            update_label_workflow_visibility()
+            return
+        try:
+            rule = current_label_replacement_rule()
+        except Exception as exc:  # noqa: BLE001
+            set_message(label_rule_message, f"Could not update replacement rule: {exc}", "danger")
+            update_label_workflow_visibility()
+            return
+        label_replacement_rules[selected_label_rule_index] = rule
         render_label_replacement_rules()
         label_replacement_table.selection = [selected_label_rule_index]
         label_rule_message.visible = False
@@ -2854,7 +2878,8 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         field_widget.param.watch(sync_label_workflow_config, "value")
     label_available_template.param.watch(select_available_label_template, "value")
     label_replacement_table.param.watch(select_label_replacement_rule, "selection")
-    label_rule_add_button.on_click(add_or_update_label_replacement_rule)
+    label_rule_add_button.on_click(add_label_replacement_rule)
+    label_rule_update_button.on_click(update_label_replacement_rule)
     label_rule_remove_button.on_click(remove_label_replacement_rule)
     for field_widget in (
         measurement_type_code,
@@ -2995,7 +3020,11 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
                         ncols=2,
                         align="start",
                     ),
-                    pn.Row(label_rule_add_button, label_rule_remove_button),
+                    pn.Row(
+                        label_rule_add_button,
+                        label_rule_update_button,
+                        label_rule_remove_button,
+                    ),
                     label_rule_message,
                     pn.Accordion(
                         ("Workflow config JSON", workflow_config_preview),
