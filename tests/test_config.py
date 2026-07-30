@@ -22,6 +22,10 @@ def test_ui_development_defaults() -> None:
     assert settings.ui_port == 8080
     assert settings.ui_autoreload is True
     assert settings.app_port == 8081
+    assert settings.api_log_path == "logs/slf-trace-api.log"
+    assert settings.ui_log_path == "logs/slf-trace-ui.log"
+    assert settings.server_log_max_bytes == 50_000_000
+    assert settings.server_log_backup_count == 5
     assert settings.server_url == "http://localhost:8081"
     assert settings.companion_auth_required is False
     assert settings.station_token is None

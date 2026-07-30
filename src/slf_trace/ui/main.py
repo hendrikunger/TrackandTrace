@@ -35,6 +35,7 @@ from slf_trace.models import (
     StationMeasurementType,
 )
 from slf_trace.security import generate_station_token, hash_station_token
+from slf_trace.server_logging import run_with_rotating_output_log
 from slf_trace.ui.branding import load_logo_svg
 
 pn.extension("tabulator")
@@ -4328,7 +4329,14 @@ def run() -> None:
             command.append("--dev")
         command.extend([str(app_path), str(kiosk_path)])
 
-        os.execvp(command[0], command)
+        raise SystemExit(
+            run_with_rotating_output_log(
+                command,
+                log_path=settings.ui_log_path,
+                max_bytes=settings.server_log_max_bytes,
+                backup_count=settings.server_log_backup_count,
+            )
+        )
 
 
 def ui_websocket_origins(settings: Settings) -> list[str]:

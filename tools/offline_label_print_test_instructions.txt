@@ -1,0 +1,123 @@
+Offline label print test instructions
+=====================================
+
+Copy these two files to the Windows printing station, for example to a USB stick:
+
+  offline_label_print_test.py
+  offline_label_print_test_instructions.txt
+
+Purpose
+-------
+
+This tests the label rendering and printer output code locally on the station.
+It does not require the station server to be reachable.
+
+The script uses the installed slf_trace Python package on the station. Run it
+from the same Python environment that the station software uses.
+
+
+1. Open PowerShell
+------------------
+
+Open PowerShell on the printing station and change into the folder where you
+copied the script, for example:
+
+  cd E:\
+
+
+2. Preview only, no physical print
+----------------------------------
+
+Adjust --template, --search, --replace, --measurement-type, and --value to match
+the real label.
+
+Example:
+
+  python .\offline_label_print_test.py --backend preview --template "C:\SLF\TrackTrace\labels\label.prn" --search "BM[15]-283" --replace "BM[15]{{value}}" --measurement-type breite --value 12.3400
+
+Expected result:
+
+  Rendered: ...\rendered_test_label.prn
+  Printable: True
+  Replacements: 1
+  Preview only; no print job sent.
+
+Open rendered_test_label.prn in a text editor to verify the replaced printer
+payload before printing.
+
+
+3. Send one test label to the Windows printer
+---------------------------------------------
+
+Use this when the preview file looks correct.
+
+Example:
+
+  python .\offline_label_print_test.py --backend win32print --printer-name "Vario III 107/12" --template "C:\SLF\TrackTrace\labels\label.prn" --search "BM[15]-283" --replace "BM[15]{{value}}" --measurement-type breite --value 12.3400
+
+Expected result:
+
+  Rendered: ...\rendered_test_label.prn
+  Printable: True
+  Replacements: 1
+  Print sent: win32print:Vario III 107/12:job:<number>
+
+
+4. Send one test label to a raw TCP printer
+-------------------------------------------
+
+Use this only if the label printer accepts raw TCP data, usually on port 9100.
+
+Example:
+
+  python .\offline_label_print_test.py --backend tcp --tcp-host 192.168.1.50 --tcp-port 9100 --template "C:\SLF\TrackTrace\labels\label.prn" --search "BM[15]-283" --replace "BM[15]{{value}}" --measurement-type breite --value 12.3400
+
+
+Common parameters
+-----------------
+
+  --template
+      Full path to the .prn template file.
+
+  --search
+      Exact text in the template that should be replaced.
+
+  --replace
+      Replacement text. Supported tokens:
+        {{value}}
+        {{value_comma}}
+        {{value_dot}}
+        {{value_raw}}
+        {{unit}}
+        {{rueckmeldenummer}}
+
+  --measurement-type
+      Measurement type code, for example:
+        breite
+        ueberstand
+        innenring
+
+  --value
+      Test measurement value, for example:
+        12.3400
+
+  --printer-name
+      Windows printer name for the win32print backend.
+
+
+Troubleshooting
+---------------
+
+If Python says slf_trace is not found, run the script with the station software
+Python, for example:
+
+  C:\SLF\TrackTrace\current\env\Scripts\python.exe .\offline_label_print_test.py ...
+
+If Printable is False, the configured replacement rule is missing a required
+measurement value.
+
+If Replacements is 0, the --search text does not exactly match the content of
+the .prn template.
+
+If win32print is not installed, the station environment was not built with the
+print extra, or the wrong Python interpreter is being used.

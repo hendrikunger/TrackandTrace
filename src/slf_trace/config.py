@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     ui_websocket_origins: str | None = None
     kiosk_scanner_poll_ms: int = 250
     kiosk_measurement_poll_ms: int = 500
+    api_log_path: str | None = "logs/slf-trace-api.log"
+    ui_log_path: str | None = "logs/slf-trace-ui.log"
+    server_log_max_bytes: int = 50_000_000
+    server_log_backup_count: int = 5
 
     database_host: str = "localhost"
     database_port: int = 5432

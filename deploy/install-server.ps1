@@ -122,14 +122,14 @@ else {
 
 Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "COMPANION_STATE_PATH" -InstallRoot $InstallRoot
 Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "COMPANION_LOG_PATH" -InstallRoot $InstallRoot
+Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "API_LOG_PATH" -InstallRoot $InstallRoot
+Convert-EnvPathToInstallRoot -EnvPath $ReleaseEnv -Name "UI_LOG_PATH" -InstallRoot $InstallRoot
 
 Remove-CurrentPath $CurrentDir
 New-Item -ItemType Junction -Path $CurrentDir -Target $ReleaseDir | Out-Null
 
 $Python = Join-Path $CurrentDir "env\python.exe"
 $Alembic = Join-Path $CurrentDir "env\Scripts\alembic.exe"
-$ApiLog = Join-Path $InstallRoot "logs\slf-trace-api.log"
-$UiLog = Join-Path $InstallRoot "logs\slf-trace-ui.log"
 $ApiLauncher = Join-Path $CurrentDir "run-api-task.ps1"
 $UiLauncher = Join-Path $CurrentDir "run-ui-task.ps1"
 
@@ -151,14 +151,11 @@ try {
     Set-Location -LiteralPath `$PSScriptRoot
     `$env:APP_ENV = "production"
     `$Python = Join-Path `$PSScriptRoot "env\python.exe"
-    `$Command = "echo [%DATE% %TIME%] Starting SLF Track Trace API task. >> `"$ApiLog`" && `"`$Python`" -c `"from slf_trace.api.main import run; run()`" >> `"$ApiLog`" 2>&1"
-    & cmd.exe /d /c `$Command
+    & `$Python -c "from slf_trace.api.main import run; run()"
     `$ExitCode = `$LASTEXITCODE
-    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace API task exited with code `$ExitCode. >> `"$ApiLog`""
     exit `$ExitCode
 }
 catch {
-    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace API task failed. >> `"$ApiLog`""
     throw
 }
 "@
@@ -170,14 +167,11 @@ try {
     Set-Location -LiteralPath `$PSScriptRoot
     `$env:APP_ENV = "production"
     `$Python = Join-Path `$PSScriptRoot "env\python.exe"
-    `$Command = "echo [%DATE% %TIME%] Starting SLF Track Trace UI task. >> `"$UiLog`" && `"`$Python`" -c `"from slf_trace.ui.main import run; run()`" >> `"$UiLog`" 2>&1"
-    & cmd.exe /d /c `$Command
+    & `$Python -c "from slf_trace.ui.main import run; run()"
     `$ExitCode = `$LASTEXITCODE
-    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace UI task exited with code `$ExitCode. >> `"$UiLog`""
     exit `$ExitCode
 }
 catch {
-    & cmd.exe /d /c "echo [%DATE% %TIME%] SLF Track Trace UI task failed. >> `"$UiLog`""
     throw
 }
 "@

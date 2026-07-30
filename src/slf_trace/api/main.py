@@ -8,6 +8,7 @@ from slf_trace import __version__
 from slf_trace.api.routes import router
 from slf_trace.config import get_settings
 from slf_trace.db import check_database
+from slf_trace.server_logging import configure_api_logging
 
 
 @asynccontextmanager
@@ -47,9 +48,11 @@ async def health(
 
 def run() -> None:
     settings = get_settings()
+    configure_api_logging(settings)
     uvicorn.run(
         "slf_trace.api.main:app",
         host=settings.app_host,
         port=settings.app_port,
         reload=settings.app_env == "development",
+        log_config=None,
     )
