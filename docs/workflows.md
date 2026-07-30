@@ -96,13 +96,7 @@ part and an explicit kiosk print request to prevent accidental duplicate labels.
       ]
     }
   },
-  "adapter_config": [
-    {
-      "type": "label_printer",
-      "name": "label-printer",
-      "enabled": true
-    }
-  ],
+  "adapter_config": [],
   "measurement_type_codes": []
 }
 ```

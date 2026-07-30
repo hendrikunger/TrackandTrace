@@ -33,6 +33,7 @@ from slf_trace.companion.label_printer import (
     load_label_template,
     print_label_content,
     render_label_template,
+    win32_printer_info,
 )
 from slf_trace.companion.laser import (
     LaserMeasurementValue,
@@ -1065,6 +1066,9 @@ class CompanionRuntime:
                     "rueckmeldenummer": rueckmeldenummer,
                     "template": config.selected_template,
                     "destination": destination,
+                    "print_backend": config.print_backend,
+                    "printer_name": config.printer_name,
+                    "payload_bytes": len(rendered.content.encode(config.encoding)),
                     "replaced_count": rendered.replaced_count,
                     "missing_warned": rendered.missing_warned,
                     "allow_missing_values": allow_missing_values,
@@ -1087,6 +1091,9 @@ class CompanionRuntime:
                     "rueckmeldenummer": rueckmeldenummer,
                     "error": exc.__class__.__name__,
                     "message": str(exc),
+                    "print_backend": config.print_backend,
+                    "printer_name": config.printer_name,
+                    "template": config.selected_template,
                 },
             )
 
@@ -1177,7 +1184,7 @@ class CompanionRuntime:
             selected_available = (
                 config.selected_template in templates if config.selected_template else False
             )
-            return {
+            status: dict[str, Any] = {
                 "template_dir": str(config.template_dir),
                 "selected_template": config.selected_template,
                 "available_templates": templates,
@@ -1189,6 +1196,16 @@ class CompanionRuntime:
                 "require_confirmation": config.require_confirmation,
                 "replacement_count": len(config.replacements),
             }
+            if config.print_backend.strip().lower() == "win32print":
+                try:
+                    status["windows_printer"] = win32_printer_info(config)
+                except Exception as exc:  # noqa: BLE001 - diagnostics only.
+                    status["windows_printer"] = {
+                        "state": "unavailable",
+                        "error": exc.__class__.__name__,
+                        "message": str(exc),
+                    }
+            return status
         except Exception as exc:  # noqa: BLE001 - heartbeat status must not break runtime.
             return {
                 "state": "configuration_error",

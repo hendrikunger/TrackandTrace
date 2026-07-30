@@ -100,12 +100,15 @@ def test_adapter_measurement_type_codes_use_enabled_adapters_only() -> None:
     ) == ["breite"]
 
 
-def test_station_has_printer_adapter_uses_enabled_printer_types() -> None:
-    assert station_has_printer_adapter(
-        {"adapter_config": [{"type": "printer_stub", "enabled": True}]}
-    )
+def test_station_has_printer_adapter_uses_label_printing_workflow() -> None:
     assert not station_has_printer_adapter(
-        {"adapter_config": [{"type": "printer_stub", "enabled": False}]}
+        {"workflow_type": "measurement_capture", "adapter_config": [{"type": "printer_stub"}]}
+    )
+    assert station_has_printer_adapter(
+        {
+            "workflow_type": "label_printing",
+            "adapter_config": [],
+        }
     )
 
 

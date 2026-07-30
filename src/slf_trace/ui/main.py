@@ -658,8 +658,6 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
             "SMB1 polling": "smb1_polling",
             "Serial request": "serial_request",
             "TCP/IP line": "tcp_line",
-            "Label printer": "label_printer",
-            "Printer stub": "printer_stub",
         },
         value="smb1_polling",
         width=adapter_field_width,
@@ -1713,7 +1711,7 @@ def build_app(*, kiosk: bool = False) -> pn.Column:
         loading_adapter_form = True
         try:
             adapter_enabled.value = bool(config.get("enabled", True))
-            adapter_type.value = str(config.get("type") or "smb1_polling")
+            set_select_value(adapter_type, str(config.get("type") or "smb1_polling"))
             adapter_name.value = str(config.get("name") or "smb1-polling")
             adapter_server.value = str(config.get("server") or "")
             adapter_smb_port.value = int(config.get("port", 445))
@@ -3462,11 +3460,7 @@ def adapter_measurement_type_codes(configs: list[dict[str, Any]]) -> list[str]:
 
 
 def station_has_printer_adapter(station: dict[str, Any]) -> bool:
-    return any(
-        config.get("enabled", True) is not False
-        and str(config.get("type") or "").strip().lower() in PRINTER_ADAPTER_TYPES
-        for config in station.get("adapter_config") or []
-    )
+    return normalize_workflow_type(str(station.get("workflow_type") or "")) == "label_printing"
 
 
 def kiosk_station_config_hash(station: dict[str, Any]) -> str:

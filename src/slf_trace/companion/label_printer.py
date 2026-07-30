@@ -218,13 +218,39 @@ def print_label_win32(config: LabelPrinterConfig, payload: bytes) -> str:
         job = win32print.StartDocPrinter(printer_handle, 1, ("SLF label", None, "RAW"))
         try:
             win32print.StartPagePrinter(printer_handle)
-            win32print.WritePrinter(printer_handle, payload)
+            written = win32print.WritePrinter(printer_handle, payload)
+            if written is not None and written != len(payload):
+                raise RuntimeError(
+                    f"Windows printer accepted {written} of {len(payload)} label bytes."
+                )
             win32print.EndPagePrinter(printer_handle)
         finally:
             win32print.EndDocPrinter(printer_handle)
     finally:
         win32print.ClosePrinter(printer_handle)
-    return f"win32print:{config.printer_name}:job:{job}"
+    return f"win32print:{config.printer_name}:job:{job}:bytes:{len(payload)}"
+
+
+def win32_printer_info(config: LabelPrinterConfig) -> dict[str, Any]:
+    try:
+        import win32print  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("win32print is not installed on this station.") from exc
+
+    printer_handle = win32print.OpenPrinter(config.printer_name)
+    try:
+        info = win32print.GetPrinter(printer_handle, 2)
+    finally:
+        win32print.ClosePrinter(printer_handle)
+
+    return {
+        "printer_name": str(info.get("pPrinterName") or config.printer_name),
+        "driver_name": str(info.get("pDriverName") or ""),
+        "port_name": str(info.get("pPortName") or ""),
+        "status": int(info.get("Status") or 0),
+        "attributes": int(info.get("Attributes") or 0),
+        "jobs": int(info.get("cJobs") or 0),
+    }
 
 
 async def print_label_tcp(config: LabelPrinterConfig, payload: bytes) -> str:

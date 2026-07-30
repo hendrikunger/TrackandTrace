@@ -423,7 +423,7 @@ def test_runtime_starts_scanner_only_for_label_printing_workflow(tmp_path) -> No
         "scanner_host": "10.0.0.21",
         "scanner_port": 9004,
         "scanner_protocol": "Keyence SR-X TCP",
-        "adapters": [{"type": "printer_stub", "name": "printer-stub"}],
+        "adapters": [],
     }
 
     runtime.configure_adapters_from_station_config()

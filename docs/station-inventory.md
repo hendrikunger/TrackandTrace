@@ -144,13 +144,7 @@ measurement values in the kiosk, render a selected `.prn` template, and print it
       ]
     }
   },
-  "adapter_config": [
-    {
-      "type": "label_printer",
-      "name": "label-printer",
-      "enabled": true
-    }
-  ],
+  "adapter_config": [],
   "measurement_type_codes": []
 }
 ```
